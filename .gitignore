@@ -1,0 +1,32 @@
+# Veritabanı ve Yerel Veriler (Hassas Veriler!)
+*.db
+*.sqlite
+*.sqlite3
+leaks.db
+
+# Ortam Değişkenleri ve API Anahtarları (ASLA YÜKLENMEMELİ!)
+.env
+.env.local
+*.env
+
+# Python Ön Bellek ve Sanal Ortam
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+
+# Node.js / React (Frontend)
+node_modules/
+build/
+dist/
+.next/
+
+# IDE ve Editor Ayarları
+.vscode/
+.idea/
+*.suo
+*.user
+*.userossc
+.vs/

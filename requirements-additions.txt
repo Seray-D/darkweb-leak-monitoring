@@ -1,0 +1,8 @@
+# Mevcut requirements.txt dosyanıza şunları ekleyin (yoksa):
+fastapi
+uvicorn[standard]
+sqlalchemy
+httpx
+pydantic
+pydantic-settings
+python-dotenv
