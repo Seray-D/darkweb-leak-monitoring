@@ -1,12 +1,16 @@
 """
 FastAPI ana uygulama.
 
-/api/v1/scan tetiklendiğinde XposedOrNot, LeakIX ve AlienVault OTX
-servislerini PARALEL olarak sorgular, sonuçları ortak NormalizedLeak
-şemasına göre tek listede birleştirir, (asset, email_leak, leak_type,
-raw_source) kombinasyonuna göre veritabanında zaten var olan kayıtları
-ELER ve SADECE GERÇEKTEN YENİ olan kayıtları veritabanına yazar. Yeni kayıt
-varsa Telegram/Slack bildirimi tetiklenir.
+/api/v1/scan tetiklendiğinde:
+  1) Veritabanındaki TÜM eski kayıtlar silinir (temiz sayfa),
+  2) XposedOrNot, LeakIX ve AlienVault OTX servisleri PARALEL olarak sorgulanır,
+  3) Sonuçlar ortak NormalizedLeak şemasına göre tek listede birleştirilir,
+  4) Aynı taramada birden fazla kaynaktan gelen birebir aynı kayıtlar
+     (asset, email_leak, leak_type, raw_source) bazında tekilleştirilir,
+  5) Kalan kayıtlar veritabanına yazılır ve Telegram/Slack bildirimi tetiklenir.
+
+Ayrıca /api/v1/leaks/clear endpoint'i ile (örn. frontend ilk açılışta / F5'te)
+veritabanı istenildiği zaman elle temizlenebilir.
 
 NOT: Bu dosya, sizin mevcut main.py'nizin YERİNE GEÇECEK şekilde tam olarak
 yazılmıştır ama kendi xposed_service.py fonksiyon adınızla (aşağıda
@@ -57,24 +61,54 @@ def _dedup_key(asset: str, email_leak: str, leak_type: str, raw_source) -> Dedup
     return (asset or "", email_leak or "", leak_type or "", raw_source or "")
 
 
+def _clear_all_leaks(db: Session) -> int:
+    """Veritabanındaki tüm BreachLog kayıtlarını siler ve silinen satır sayısını döner."""
+    deleted_count = db.query(BreachLog).delete()
+    db.commit()
+    return deleted_count
+
+
 @app.get("/api/v1/leaks")
 def get_leaks(db: Session = Depends(get_db)):
-    """Veritabanındaki tüm sızıntı kayıtlarını döner."""
+    """Veritabanındaki tüm sızıntı kayıtlarını döner (yalnızca en son taramaya ait olmalıdır)."""
     return db.query(BreachLog).order_by(BreachLog.id.desc()).all()
+
+
+@app.delete("/api/v1/leaks/clear")
+def clear_leaks(db: Session = Depends(get_db)):
+    """
+    Veritabanındaki tüm sızıntı kayıtlarını temizler.
+    Frontend ilk açıldığında veya sayfa yenilendiğinde (F5) eski verilerin
+    ekrana dolmasını engellemek için çağrılır.
+    """
+    deleted_count = _clear_all_leaks(db)
+    logger.info("Veritabanı temizlendi, silinen kayıt sayısı: %s", deleted_count)
+    return {"detail": "Veritabanı temizlendi.", "deleted_count": deleted_count}
 
 
 @app.get("/api/v1/scan")
 async def scan(email: str, db: Session = Depends(get_db)):
     """
-    Verilen e-posta için XposedOrNot, LeakIX ve AlienVault OTX servislerini
-    PARALEL sorgular, mükerrer kayıtları eleyip SADECE YENİ olanları
-    veritabanına kaydeder, yeni kayıt varsa bildirim gönderir ve bu taramada
-    eklenen kayıtları döner.
+    Verilen e-posta için taramaya başlamadan önce veritabanındaki TÜM eski
+    kayıtları siler (temiz sayfa), ardından XposedOrNot, LeakIX ve AlienVault
+    OTX servislerini PARALEL sorgular, aynı taramadaki mükerrer kayıtları
+    eleyip kalanları veritabanına kaydeder, yeni kayıt varsa bildirim
+    gönderir ve bu taramada eklenen kayıtları döner.
     """
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Geçerli bir e-posta adresi girin.")
 
     domain = email.split("@")[-1]
+
+    # --- 0. Yeni taramaya başlamadan önce veritabanını tamamen sıfırla ---
+    # İstenen davranış: veritabanında eski aramaların birikmemesi, her zaman
+    # sadece O AN yapılan aramanın taze sonuçlarının bulunması.
+    deleted_count = _clear_all_leaks(db)
+    logger.info(
+        "Yeni tarama öncesi veritabanı sıfırlandı (email=%s), silinen kayıt sayısı: %s",
+        email,
+        deleted_count,
+    )
 
     # --- 1. Üç servisi paralel çağır ---
     # return_exceptions=True: bir servis çökerse diğerlerini etkilemesin.
@@ -105,41 +139,25 @@ async def scan(email: str, db: Session = Depends(get_db)):
     if not all_results:
         return []
 
-    # --- 2. Mükerrer kayıtları ele ---
-    # Bu taramada bulunan adaylardan oluşan anahtar seti üzerinden DB'de
-    # zaten var olanları TEK sorguda çekip Python tarafında karşılaştırıyoruz
-    # (tüm tabloyu taramak yerine sadece ilgili asset'lere bakılır).
-    candidate_assets = {item.asset for item in all_results}
-    existing_rows = (
-        db.query(
-            BreachLog.asset,
-            BreachLog.email_leak,
-            BreachLog.leak_type,
-            BreachLog.raw_source,
-        )
-        .filter(BreachLog.asset.in_(candidate_assets))
-        .all()
-    )
-    existing_keys = {
-        _dedup_key(row.asset, row.email_leak, row.leak_type, row.raw_source)
-        for row in existing_rows
-    }
-
+    # --- 2. Bu taramadaki mükerrer kayıtları ele ---
+    # Veritabanı bu noktada zaten boş olduğu için (üstteki 0. adımda
+    # sıfırlandı), artık eski kayıtlarla karşılaştırma yapmaya gerek yok;
+    # sadece bu taramanın kendi içindeki (örn. birden fazla kaynaktan gelen
+    # birebir aynı kayıt) mükerrerliği önlüyoruz.
+    seen_keys: set = set()
     new_results: List[NormalizedLeak] = []
     for item in all_results:
         key = _dedup_key(item.asset, item.email_leak, item.leak_type, item.raw_source)
-        if key in existing_keys:
+        if key in seen_keys:
             continue
-        # Aynı taramada birden fazla kaynaktan gelen birebir aynı kayıt
-        # tekrar eklenmesin diye anahtarı hemen sete ekliyoruz.
-        existing_keys.add(key)
+        seen_keys.add(key)
         new_results.append(item)
 
     if not new_results:
-        logger.info("Tarama tamamlandı, ancak tüm sonuçlar zaten kayıtlıydı (email=%s).", email)
+        logger.info("Tarama tamamlandı ancak işlenecek sonuç bulunamadı (email=%s).", email)
         return []
 
-    # --- 3. Sadece yeni kayıtları veritabanına yaz ---
+    # --- 3. Bu taramanın sonuçlarını veritabanına yaz ---
     db_objects = [
         BreachLog(
             asset=item.asset,
@@ -174,4 +192,3 @@ async def _safe_xposed_check(email: str) -> list:
     Fonksiyon adı farklıysa burayı güncelleyin (örn. xposed_service.scan_email).
     """
     return await xposed_service.check_email(email)
-
