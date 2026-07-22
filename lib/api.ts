@@ -1,4 +1,4 @@
-import { HibpRangeResponse, Leak, PwnedPasswordResult } from "./types";
+import { HibpRangeResponse, Leak, MonitoredAsset, PwnedPasswordResult } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -108,4 +108,76 @@ export async function clearLeaks(): Promise<void> {
     if (!res.ok) {
         throw new Error(`Veritabanı temizlenirken hata oluştu (${res.status})`);
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* İzlenen Varlıklar (Monitored Assets) modülü — bkz. lib/types.ts      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Verilen e-posta veya domain'i izleme listesine ekler.
+ * Zaten listede varsa backend 409 döner; burada okunabilir bir hataya
+ * çevrilir.
+ */
+export async function addMonitoredAsset(target: string): Promise<MonitoredAsset> {
+    const res = await fetch(`${API_BASE}/api/v1/assets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target: target.trim() }),
+        cache: "no-store",
+    });
+
+    if (res.status === 409) {
+        throw new Error("Bu varlık zaten izleme listesinde.");
+    }
+    if (!res.ok) {
+        throw new Error(`İzlemeye eklenirken hata oluştu (${res.status})`);
+    }
+
+    return res.json();
+}
+
+/**
+ * İzlenen tüm varlıkları (ve her birine bağlı kalıcı sızıntı geçmişini)
+ * getirir.
+ */
+export async function getMonitoredAssets(): Promise<MonitoredAsset[]> {
+    const res = await fetch(`${API_BASE}/api/v1/assets`, { cache: "no-store" });
+
+    if (!res.ok) {
+        throw new Error(`İzlenen varlıklar getirilirken hata oluştu (${res.status})`);
+    }
+
+    return res.json();
+}
+
+/**
+ * İzleme listesinden bir varlığı (ve ona bağlı sızıntı geçmişini) kaldırır.
+ */
+export async function deleteMonitoredAsset(id: number): Promise<void> {
+    const res = await fetch(`${API_BASE}/api/v1/assets/${id}`, {
+        method: "DELETE",
+        cache: "no-store",
+    });
+
+    if (!res.ok) {
+        throw new Error(`İzleme listesinden kaldırılırken hata oluştu (${res.status})`);
+    }
+}
+
+/**
+ * Belirli bir izlenen varlığı anında yeniden tarar, güncel (breach_logs
+ * dahil) halini döner.
+ */
+export async function rescanMonitoredAsset(id: number): Promise<MonitoredAsset> {
+    const res = await fetch(`${API_BASE}/api/v1/assets/${id}/scan`, {
+        method: "POST",
+        cache: "no-store",
+    });
+
+    if (!res.ok) {
+        throw new Error(`Yeniden tarama başarısız oldu (${res.status})`);
+    }
+
+    return res.json();
 }

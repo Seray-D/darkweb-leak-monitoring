@@ -6,9 +6,9 @@ kaynaktan bağımsız şekilde tek bir listeyi veritabanına yazabilir.
 """
 
 from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 Priority = Literal["Info", "Low", "Medium", "High", "Critical"]
 Status = Literal["Active", "Monitoring", "Resolved"]
@@ -31,3 +31,50 @@ class NormalizedLeak(BaseModel):
     raw_source: Optional[str] = Field(
         default=None, description="Debug amaçlı: orijinal servis adı / referans id"
     )
+
+
+# --------------------------------------------------------------------- #
+# İzlenen Varlıklar (Monitored Assets) modülü şemaları
+#
+# NOT: Buradaki AssetBreachLogOut, ad-hoc arama şeması olan NormalizedLeak
+# ile KARIŞTIRILMAMALIDIR. NormalizedLeak / BreachLog anlık tarama
+# sonuçlarını, AssetBreachLog ise izlenen bir varlığa bağlı KALICI sızıntı
+# geçmişini temsil eder (bkz. models.py).
+# --------------------------------------------------------------------- #
+
+AssetType = Literal["email", "domain"]
+
+
+class MonitoredAssetCreate(BaseModel):
+    target: str = Field(..., description="İzlenecek e-posta veya domain")
+
+    @field_validator("target")
+    @classmethod
+    def target_not_blank(cls, value: str) -> str:
+        cleaned = (value or "").strip()
+        if not cleaned:
+            raise ValueError("target boş olamaz.")
+        return cleaned
+
+
+class AssetBreachLogOut(BaseModel):
+    id: int
+    breach_name: str
+    breach_date: Optional[str] = None
+    exposed_data_types: str = ""
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class MonitoredAssetOut(BaseModel):
+    id: int
+    target: str
+    asset_type: AssetType
+    is_verified: bool
+    created_at: datetime
+    breach_logs: List[AssetBreachLogOut] = Field(default_factory=list)
+
+    class Config:
+        from_attributes = True

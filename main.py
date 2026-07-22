@@ -23,15 +23,19 @@ import logging
 import os
 import re
 from typing import List, Tuple
+
 import httpx
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
-from database import Base, engine, get_db
-from models import BreachLog
-from schemas import NormalizedLeak
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+
+from database import Base, SessionLocal, engine, get_db
+from models import AssetBreachLog, BreachLog, MonitoredAsset
+from schemas import MonitoredAssetCreate, MonitoredAssetOut, NormalizedLeak
 from services import (
     breachdirectory_service,
     leakix_service,
@@ -50,9 +54,7 @@ logging.basicConfig(level=logging.INFO)
 def _log_configured_api_keys() -> None:
     """
     Sunucu açılışında hangi opsiyonel API key'lerinin .env'den okunduğunu
-    (maskelenmiş şekilde) loglar. Böylece "veri hiç gelmiyor" sorunlarının
-    en sık nedeni olan boş/eksik .env değeri, ilk taramayı beklemeden
-    başlangıçta terminalde görünür.
+    (maskelenmiş şekilde) loglar.
     """
     keys_to_check = ("RAPIDAPI_KEY", "LEAKIX_API_KEY", "OTX_API_KEY")
     for key_name in keys_to_check:
@@ -84,29 +86,23 @@ app.add_middleware(
 # Dedup anahtarı: (asset, email_leak, leak_type, raw_source)
 DedupKey = Tuple[str, str, str, str]
 
-# HIBP Pwned Passwords k-Anonymity endpoint'i. Sadece SHA-1 hash'in ilk 5
-# karakteri (prefix) buraya gönderilir; asıl parola veya tam hash ASLA
-# backend'e/HIBP'ye ulaşmaz (bkz. /api/v1/check-password).
 HIBP_RANGE_URL = "https://api.pwnedpasswords.com/range/{prefix}"
 SHA1_PREFIX_RE = re.compile(r"^[A-Fa-f0-9]{5}$")
 
 
-def _dedup_key(asset: str, email_leak: str, leak_type: str, raw_source) -> DedupKey:
+def _dedup_key(asset: str, email_leak: str, leak_type: str, raw_source: str) -> DedupKey:
     """Karşılaştırmayı tutarlı yapmak için None -> '' normalize edilir."""
-    return (asset or "", email_leak or "", leak_type or "", raw_source or "")
+    return (
+        (asset or "").lower().strip(),
+        (email_leak or "").lower().strip(),
+        (leak_type or "").lower().strip(),
+        (raw_source or "").lower().strip(),
+    )
 
 
 def _extract_domain(raw: str) -> str:
     """
-    Kullanıcının domain arama kutusuna girdiği serbest metni saf bir domain'e
-    indirger. Aşağıdaki durumları otomatik temizler:
-      - baştaki/sondaki boşluklar
-      - "http://" / "https://" öneki
-      - baştaki "@" işareti (örn. "@izmir.bel.tr")
-      - girilen değer tam bir e-posta ise ("info@izmir.bel.tr") @ sonrası alınır
-      - "www." öneki
-      - URL'in path/query kısmı (örn. "izmir.bel.tr/giris?x=1" -> "izmir.bel.tr")
-    Sonuç küçük harfe çevrilir (case-insensitive arama için).
+    Kullanıcının domain arama kutusuna girdiği serbest metni saf bir domain'e indirger.
     """
     value = (raw or "").strip()
     if not value:
@@ -115,12 +111,11 @@ def _extract_domain(raw: str) -> str:
     value = re.sub(r"^https?://", "", value, flags=re.IGNORECASE)
 
     if "@" in value:
-        # "@izmir.bel.tr" ya da "info@izmir.bel.tr" -> "izmir.bel.tr"
         value = value.split("@")[-1]
 
     value = re.sub(r"^www\.", "", value, flags=re.IGNORECASE)
 
-    # Path / query / port kısmını at, sadece host kısmını bırak.
+    # Path / query / port kısmını at
     value = value.split("/")[0].split("?")[0].split(":")[0]
 
     return value.strip().strip(".").lower()
@@ -135,26 +130,13 @@ def _clear_all_leaks(db: Session) -> int:
 
 @app.get("/api/v1/leaks")
 def get_leaks(db: Session = Depends(get_db)):
-    """Veritabanındaki tüm sızıntı kayıtlarını döner (yalnızca en son taramaya ait olmalıdır)."""
+    """Veritabanındaki tüm sızıntı kayıtlarını döner."""
     return db.query(BreachLog).order_by(BreachLog.id.desc()).all()
 
 
 @app.get("/api/v1/leaks/search-domain")
 def search_domain_leaks(domain: str, db: Session = Depends(get_db)):
-    """
-    Verilen domain'e göre veritabanındaki kayıtları filtreler.
-
-    - Girdi ("http://", "https://", "www.", baştaki "@" gibi eklerden)
-      otomatik temizlenip saf domain'e indirgenir (bkz. _extract_domain).
-    - `asset` (örn. vpn.izmir.bel.tr) veya `email_leak` (örn.
-      aliguzel@izmir.bel.tr) alanlarından herhangi birinde bu domain
-      GEÇEN (substring) tüm kayıtlar döner.
-    - Karşılaştırma case-insensitive'dir (ILIKE).
-
-    Not: Bu endpoint yeni bir tarama TETİKLEMEZ; mevcut veritabanı
-    kayıtları üzerinde filtreleme yapar. Belirli bir domain için canlı
-    kaynak taraması isteniyorsa /api/v1/scan?email=... kullanılmalıdır.
-    """
+    """Verilen domain'e göre veritabanındaki kayıtları filtreler."""
     cleaned_domain = _extract_domain(domain)
     if not cleaned_domain:
         raise HTTPException(status_code=400, detail="Geçerli bir domain girin.")
@@ -183,35 +165,115 @@ def search_domain_leaks(domain: str, db: Session = Depends(get_db)):
 
 @app.delete("/api/v1/leaks/clear")
 def clear_leaks(db: Session = Depends(get_db)):
-    """
-    Veritabanındaki tüm sızıntı kayıtlarını temizler.
-    Frontend ilk açıldığında veya sayfa yenilendiğinde (F5) eski verilerin
-    ekrana dolmasını engellemek için çağrılır.
-    """
+    """Veritabanındaki tüm sızıntı kayıtlarını temizler."""
     deleted_count = _clear_all_leaks(db)
     logger.info("Veritabanı temizlendi, silinen kayıt sayısı: %s", deleted_count)
     return {"detail": "Veritabanı temizlendi.", "deleted_count": deleted_count}
 
 
+@app.post("/api/v1/assets", response_model=MonitoredAssetOut, status_code=201)
+async def create_monitored_asset(
+    payload: MonitoredAssetCreate, db: Session = Depends(get_db)
+):
+    """Yeni bir e-posta veya domain'i izleme listesine ekler ve tarar."""
+    raw_target = payload.target.strip()
+
+    if "@" in raw_target:
+        asset_type = "email"
+        cleaned_target = raw_target.lower()
+    else:
+        asset_type = "domain"
+        cleaned_target = _extract_domain(raw_target)
+
+    if not cleaned_target:
+        raise HTTPException(
+            status_code=400, detail="Geçerli bir e-posta veya domain girin."
+        )
+
+    existing = (
+        db.query(MonitoredAsset)
+        .filter(MonitoredAsset.target == cleaned_target)
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=409, detail="Bu varlık zaten izleme listesinde."
+        )
+
+    asset = MonitoredAsset(
+        target=cleaned_target, asset_type=asset_type, is_verified=False
+    )
+    db.add(asset)
+    db.commit()
+    db.refresh(asset)
+
+    logger.info("İzlemeye eklendi: target='%s', tip='%s'", cleaned_target, asset_type)
+
+    try:
+        new_count = await _scan_and_persist_asset(asset, db)
+        logger.info(
+            "İlk tarama tamamlandı: target='%s', yeni kayıt=%s",
+            cleaned_target,
+            new_count,
+        )
+    except Exception as exc:
+        logger.error(
+            "İlk tarama başarısız (target='%s'): %s", cleaned_target, exc
+        )
+
+    db.expire_all()
+    db.refresh(asset)
+    return asset
+
+
+@app.get("/api/v1/assets", response_model=List[MonitoredAssetOut])
+def list_monitored_assets(db: Session = Depends(get_db)):
+    """İzlenen tüm varlıkları ve her birine bağlı sızıntı geçmişini döner."""
+    return db.query(MonitoredAsset).order_by(MonitoredAsset.id.desc()).all()
+
+
+@app.post("/api/v1/assets/{asset_id}/scan", response_model=MonitoredAssetOut)
+async def rescan_monitored_asset(asset_id: int, db: Session = Depends(get_db)):
+    """"Şimdi Tara" butonunun çağırdığı manuel yeniden tarama endpoint'i."""
+    asset = db.query(MonitoredAsset).filter(MonitoredAsset.id == asset_id).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="İzlenen varlık bulunamadı.")
+
+    try:
+        new_count = await _scan_and_persist_asset(asset, db)
+    except Exception as exc:
+        logger.error("Manuel tarama başarısız (id=%s): %s", asset_id, exc)
+        raise HTTPException(
+            status_code=502, detail="Tarama sırasında hata oluştu."
+        ) from exc
+
+    db.expire_all()
+    db.refresh(asset)
+    logger.info(
+        "Manuel tarama tamamlandı: id=%s, güncel kayıt sayısı=%s",
+        asset_id,
+        new_count,
+    )
+    return asset
+
+
+@app.delete("/api/v1/assets/{asset_id}")
+def delete_monitored_asset(asset_id: int, db: Session = Depends(get_db)):
+    """İzleme listesinden bir varlığı çıkartır."""
+    asset = db.query(MonitoredAsset).filter(MonitoredAsset.id == asset_id).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="İzlenen varlık bulunamadı.")
+
+    db.delete(asset)
+    db.commit()
+
+    logger.info("İzlemeden kaldırıldı: id=%s, target='%s'", asset_id, asset.target)
+    return {"detail": "İzleme listesinden kaldırıldı.", "id": asset_id}
+
+
 @app.get("/api/v1/check-password")
 async def check_password(prefix: str):
-    """
-    HIBP "Pwned Passwords" k-Anonymity modeli — hash bazlı parola sızıntı
-    kontrolü.
-
-    Bu endpoint parolanın kendisini veya tam SHA-1 hash'ini ASLA görmez:
-      - İstemci (tarayıcı) parolanın SHA-1 hash'ini yerel olarak hesaplar,
-      - Hash'in yalnızca İLK 5 karakteri (prefix) bu endpoint'e gönderilir,
-      - Biz bu prefix'i HIBP'nin /range/{prefix} uç noktasına iletiriz
-        (CORS sorunlarını önlemek için backend üzerinden),
-      - HIBP o prefix'e uyan TÜM suffix:count çiftlerini (binlerce satır)
-        döner; gerçek eşleşme (suffix karşılaştırması) istemci tarafında
-        yapılır, çünkü tam hash'i (dolayısıyla suffix'i) yalnızca istemci
-        bilir.
-
-    Böylece parola veya tam hash hiçbir zaman ağda tek başına, geri
-    dönüştürülebilir şekilde dolaşmaz.
-    """
+    """HIBP Pwned Passwords kontrolü."""
     cleaned_prefix = (prefix or "").strip().upper()
     if not SHA1_PREFIX_RE.match(cleaned_prefix):
         raise HTTPException(
@@ -220,8 +282,6 @@ async def check_password(prefix: str):
         )
 
     url = HIBP_RANGE_URL.format(prefix=cleaned_prefix)
-    # "Add-Padding" HIBP'nin resmi anti-timing-analysis header'ıdır; yanıta
-    # rastgele sahte (count=0) satırlar ekletir, gerçek eşleşmeleri etkilemez.
     headers = {"Add-Padding": "true"}
 
     try:
@@ -235,7 +295,8 @@ async def check_password(prefix: str):
 
     if resp.status_code != 200:
         logger.warning(
-            "HIBP Pwned Passwords beklenmeyen durum kodu döndürdü: %s", resp.status_code
+            "HIBP Pwned Passwords beklenmeyen durum kodu döndürdü: %s",
+            resp.status_code,
         )
         raise HTTPException(
             status_code=502, detail=f"HIBP servisi hata döndü ({resp.status_code})."
@@ -256,21 +317,130 @@ async def check_password(prefix: str):
     return {"prefix": cleaned_prefix, "hashes": hashes}
 
 
+# --------------------------------------------------------------------- #
+# İzlenen Varlıklar Taramaları Yardımcı Fonksiyonları
+# --------------------------------------------------------------------- #
+
+
+async def _gather_leaks_for_asset(asset: MonitoredAsset) -> List[NormalizedLeak]:
+    """
+    MonitoredAsset.asset_type'a göre uygun servisleri paralel çağırır.
+    Ad-hoc /scan mantığı ile tam 1:1 uyumlu şekilde sorgular ve birleştirir.
+    """
+    target = asset.target
+    all_results: List[NormalizedLeak] = []
+
+    if asset.asset_type == "email":
+        domain = target.split("@")[-1]
+        xposed_raw, leakix_results, otx_results, bd_results = await asyncio.gather(
+            _safe_xposed_check(target),
+            leakix_service.search_leakix(domain),
+            otx_service.search_otx(domain, target),
+            breachdirectory_service.search_breachdirectory(target),
+            return_exceptions=True,
+        )
+
+        if not isinstance(xposed_raw, Exception):
+            all_results.extend(normalize_xposed_results(xposed_raw, target))
+
+        if not isinstance(leakix_results, Exception):
+            all_results.extend(leakix_results)
+
+        if not isinstance(otx_results, Exception):
+            all_results.extend(otx_results)
+
+        if not isinstance(bd_results, Exception):
+            all_results.extend(bd_results)
+
+    else:  # domain
+        leakix_results, otx_results = await asyncio.gather(
+            leakix_service.search_leakix(target),
+            otx_service.search_otx(target, ""),
+            return_exceptions=True,
+        )
+
+        if not isinstance(leakix_results, Exception):
+            all_results.extend(leakix_results)
+
+        if not isinstance(otx_results, Exception):
+            all_results.extend(otx_results)
+
+    # Ad-hoc /scan ile birebir aynı dedup algoritmasını uygula
+    seen_keys: set = set()
+    deduped_results: List[NormalizedLeak] = []
+    for item in all_results:
+        key = _dedup_key(item.asset, item.email_leak, item.leak_type, item.raw_source)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped_results.append(item)
+
+    return deduped_results
+
+
+def _persist_asset_leaks(
+    asset: MonitoredAsset, leaks: List[NormalizedLeak], db: Session
+) -> int:
+    """
+    NormalizedLeak listesini AssetBreachLog'a yazar.
+    Mükerrer veya katlanmış verileri engeller, ad-hoc /scan endpoint'i ile
+    tam olarak 1:1 sayıda kayıt oluşturur.
+    """
+    # 1. İlişkili eski kayıtları sil
+    db.query(AssetBreachLog).filter(
+        AssetBreachLog.asset_id == asset.id
+    ).delete(synchronize_session=False)
+    db.commit()
+
+    # 2. Birebir ad-hoc scan ile aynı sayıda record oluştur
+    new_logs = [
+        AssetBreachLog(
+            asset_id=asset.id,
+            breach_name=item.raw_source or item.market or "Unknown Leak",
+            breach_date=item.discovery_date or item.last_seen or None,
+            exposed_data_types=item.leak_type or "",
+        )
+        for item in leaks
+    ]
+
+    # 3. Veritabanına kaydet
+    if new_logs:
+        db.add_all(new_logs)
+        db.commit()
+
+    # 4. İlişkiyi sıfırla ve tazele
+    db.expire(asset, ["breach_logs"])
+    db.refresh(asset)
+
+    logger.info(
+        "[Asset Scan] '%s' için %s güncel kayıt kaydedildi.",
+        asset.target,
+        len(new_logs),
+    )
+
+    return len(new_logs)
+
+
+async def _scan_and_persist_asset(asset: MonitoredAsset, db: Session) -> int:
+    leaks = await _gather_leaks_for_asset(asset)
+    return _persist_asset_leaks(asset, leaks, db)
+
+
+async def _safe_xposed_check(email: str) -> list:
+    return await xposed_service.check_email(email)
+
+
 @app.get("/api/v1/scan")
 async def scan(email: str, db: Session = Depends(get_db)):
-    """
-    Verilen e-posta için taramaya başlamadan önce veritabanındaki TÜM eski
-    kayıtları siler (temiz sayfa), ardından XposedOrNot, LeakIX, AlienVault
-    OTX ve BreachDirectory servislerini PARALEL sorgular, aynı taramadaki mükerrer kayıtları
-    eleyip kalanları veritabanına kaydeder, yeni kayıt varsa bildirim
-    gönderir ve bu taramada eklenen kayıtları döner.
-    """
+    """Verilen e-posta için canlı tarama yapar."""
     if not email or "@" not in email:
-        raise HTTPException(status_code=400, detail="Geçerli bir e-posta adresi girin.")
+        raise HTTPException(
+            status_code=400, detail="Geçerli bir e-posta adresi girin."
+        )
 
     domain = email.split("@")[-1]
 
-    # --- 0. Yeni taramaya başlamadan önce veritabanını tamamen sıfırla ---
+    # --- 0. Sıfırla ---
     deleted_count = _clear_all_leaks(db)
     logger.info(
         "Yeni tarama öncesi veritabanı sıfırlandı (email=%s), silinen kayıt sayısı: %s",
@@ -278,7 +448,7 @@ async def scan(email: str, db: Session = Depends(get_db)):
         deleted_count,
     )
 
-    # --- 1. Dört servisi paralel çağır ---
+    # --- 1. Paralel Sorgular ---
     xposed_raw, leakix_results, otx_results, bd_results = await asyncio.gather(
         _safe_xposed_check(email),
         leakix_service.search_leakix(domain),
@@ -293,33 +463,27 @@ async def scan(email: str, db: Session = Depends(get_db)):
         logger.error("XposedOrNot sorgusu hata verdi: %s", xposed_raw)
     else:
         xposed_normalized = normalize_xposed_results(xposed_raw, email)
-        logger.info("XposedOrNot: %s ham kayıt -> %s normalize edilmiş kayıt", len(xposed_raw or []), len(xposed_normalized))
         all_results.extend(xposed_normalized)
 
     if isinstance(leakix_results, Exception):
         logger.error("LeakIX sorgusu hata verdi: %s", leakix_results)
     else:
-        logger.info("LeakIX: %s kayıt bulundu", len(leakix_results))
         all_results.extend(leakix_results)
 
     if isinstance(otx_results, Exception):
         logger.error("OTX sorgusu hata verdi: %s", otx_results)
     else:
-        logger.info("AlienVault OTX: %s kayıt bulundu", len(otx_results))
         all_results.extend(otx_results)
 
     if isinstance(bd_results, Exception):
         logger.error("BreachDirectory sorgusu hata verdi: %s", bd_results)
     else:
-        logger.info("BreachDirectory: %s kayıt bulundu", len(bd_results))
         all_results.extend(bd_results)
-
-    logger.info("Tüm kaynaklardan toplam %s ham kayıt birleştirildi (email=%s).", len(all_results), email)
 
     if not all_results:
         return []
 
-    # --- 2. Bu taramadaki mükerrer kayıtları ele ---
+    # --- 2. Mükerrer Kayıtları Ele ---
     seen_keys: set = set()
     new_results: List[NormalizedLeak] = []
     for item in all_results:
@@ -330,10 +494,9 @@ async def scan(email: str, db: Session = Depends(get_db)):
         new_results.append(item)
 
     if not new_results:
-        logger.info("Tarama tamamlandı ancak işlenecek sonuç bulunamadı (email=%s).", email)
         return []
 
-    # --- 3. Bu taramanın sonuçlarını veritabanına yaz ---
+    # --- 3. Kaydet ---
     db_objects = [
         BreachLog(
             asset=item.asset,
@@ -356,14 +519,58 @@ async def scan(email: str, db: Session = Depends(get_db)):
     for obj in db_objects:
         db.refresh(obj)
 
-    # --- 4. Yeni kayıt bulunduğu için bildirim gönder ---
+    # --- 4. Bildirim Gönder ---
     await notification_service.send_leak_alert(db_objects)
 
     return db_objects
 
 
-async def _safe_xposed_check(email: str) -> list:
-    """
-    services/xposed_service.py içerisindeki check_email fonksiyonunu çağırır.
-    """
-    return await xposed_service.check_email(email)
+# --------------------------------------------------------------------- #
+# Otomatik Arka Plan Taraması (APScheduler)
+# --------------------------------------------------------------------- #
+
+ASSET_SCAN_INTERVAL_HOURS = int(os.getenv("ASSET_SCAN_INTERVAL_HOURS", "24"))
+scheduler = AsyncIOScheduler()
+
+
+async def _scheduled_scan_all_assets() -> None:
+    """Veritabanındaki tüm izlenen varlıkları periyodik olarak tarar."""
+    logger.info("⏰ [Scheduler] Periyodik tarama başladı.")
+    db = SessionLocal()
+    try:
+        for asset in db.query(MonitoredAsset).all():
+            try:
+                new_count = await _scan_and_persist_asset(asset, db)
+                if new_count:
+                    logger.info(
+                        "⏰ [Scheduler] '%s' için %s güncel kayıt.",
+                        asset.target,
+                        new_count,
+                    )
+            except Exception as exc:
+                logger.error(
+                    "⏰ [Scheduler] '%s' taranırken hata: %s", asset.target, exc
+                )
+    finally:
+        db.close()
+    logger.info("⏰ [Scheduler] Tarama tamamlandı.")
+
+
+@app.on_event("startup")
+async def _start_scheduler() -> None:
+    scheduler.add_job(
+        _scheduled_scan_all_assets,
+        trigger=IntervalTrigger(hours=ASSET_SCAN_INTERVAL_HOURS),
+        id="periodic_asset_scan",
+        replace_existing=True,
+    )
+    scheduler.start()
+    logger.info(
+        "✅ APScheduler başladı, izlenen varlıklar %s saatte bir taranacak.",
+        ASSET_SCAN_INTERVAL_HOURS,
+    )
+
+
+@app.on_event("shutdown")
+async def _stop_scheduler() -> None:
+    scheduler.shutdown(wait=False)

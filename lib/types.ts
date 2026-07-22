@@ -80,3 +80,30 @@ export interface PwnedPasswordResult {
     pwned: boolean;
     count: number;
 }
+
+/* ------------------------------------------------------------------ */
+/* İzlenen Varlıklar (Monitored Assets) modülü.                         */
+/* NOT: AssetBreachLog, yukarıdaki ad-hoc `Leak` tipiyle KARIŞTIRILMAMALI. */
+/* `Leak` her taramada sıfırlanan anlık sonuçları, `AssetBreachLog` ise   */
+/* bir MonitoredAsset'e bağlı KALICI sızıntı geçmişini temsil eder.       */
+/* Bkz. lib/api.ts -> addMonitoredAsset / getMonitoredAssets.            */
+/* ------------------------------------------------------------------ */
+
+export type AssetType = "email" | "domain";
+
+export interface AssetBreachLog {
+    id: number;
+    breach_name: string;
+    breach_date?: string | null;
+    exposed_data_types: string;
+    created_at: string;
+}
+
+export interface MonitoredAsset {
+    id: number;
+    target: string;
+    asset_type: AssetType;
+    is_verified: boolean;
+    created_at: string;
+    breach_logs: AssetBreachLog[];
+}

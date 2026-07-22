@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { AlertTriangle, CheckCircle2, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, X, RefreshCw, ShieldPlus, Trash2 } from "lucide-react";
 import Header from "@/components/Header";
 import LeakTable from "@/components/LeakTable";
 import StatsCards from "@/components/StatsCards";
-import { scanEmail } from "@/lib/api";
-import { Leak } from "@/lib/types";
+import { scanEmail, addMonitoredAsset, getMonitoredAssets, deleteMonitoredAsset, rescanMonitoredAsset } from "@/lib/api";
+import { Leak, MonitoredAsset } from "@/lib/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -25,6 +25,19 @@ export default function Home() {
     const [scanning, setScanning] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [infoMessage, setInfoMessage] = useState<string | null>(null);
+
+    // İzlemeye Ekle butonu, en son aratılan hedefe (e-posta/domain) göre çalışır
+    const [currentTarget, setCurrentTarget] = useState<string | null>(null);
+    const [addingToMonitoring, setAddingToMonitoring] = useState(false);
+
+    // İzlenen Varlıklar (Monitored Assets) paneli
+    const [showMonitored, setShowMonitored] = useState(false);
+    const [monitoredAssets, setMonitoredAssets] = useState<MonitoredAsset[]>([]);
+    const [monitoredLoading, setMonitoredLoading] = useState(false);
+    const [monitoredError, setMonitoredError] = useState<string | null>(null);
+
+    // Yeniden tarama durumu
+    const [rescanningId, setRescanningId] = useState<number | null>(null);
 
     const didClearOnMount = useRef(false);
 
@@ -55,6 +68,7 @@ export default function Home() {
         setScanning(true);
         setError(null);
         setInfoMessage(null);
+        setCurrentTarget(email.trim());
 
         // Yeni arama başlar başlamaz sonuçları sıfırla
         setLeaks([]);
@@ -90,6 +104,82 @@ export default function Home() {
         setLeaks(updatedLeaks);
     };
 
+    // En son aratılan hedefi (currentTarget) izleme listesine ekler ve anında tarar
+    const handleAddToMonitoring = async () => {
+        if (!currentTarget) return;
+
+        setAddingToMonitoring(true);
+        setError(null);
+        try {
+            // 1. Varlığı izlemeye ekle
+            const newAsset = await addMonitoredAsset(currentTarget);
+            setInfoMessage(`"${currentTarget}" izleme listesine eklendi. Sızıntılar taranıyor...`);
+
+            // 2. Anında ilk taramasını başlat ki sızıntı sayısı 0 kalmasın
+            await rescanMonitoredAsset(newAsset.id);
+
+            if (showMonitored) {
+                await loadMonitoredAssets();
+            }
+            setInfoMessage(`"${currentTarget}" izlemeye eklendi ve sızıntı geçmişi güncellendi.`);
+        } catch (err) {
+            setError(
+                err instanceof Error ? err.message : "İzlemeye eklenirken hata oluştu."
+            );
+        } finally {
+            setAddingToMonitoring(false);
+        }
+    };
+
+    const loadMonitoredAssets = useCallback(async () => {
+        setMonitoredLoading(true);
+        setMonitoredError(null);
+        try {
+            const data = await getMonitoredAssets();
+            setMonitoredAssets(data);
+        } catch (err) {
+            setMonitoredError(
+                err instanceof Error ? err.message : "İzlenen varlıklar alınamadı."
+            );
+        } finally {
+            setMonitoredLoading(false);
+        }
+    }, []);
+
+    const handleToggleMonitored = () => {
+        const next = !showMonitored;
+        setShowMonitored(next);
+        if (next) {
+            loadMonitoredAssets();
+        }
+    };
+
+    const handleRemoveMonitored = async (id: number) => {
+        try {
+            await deleteMonitoredAsset(id);
+            setMonitoredAssets((prev) => prev.filter((asset) => asset.id !== id));
+        } catch (err) {
+            setMonitoredError(
+                err instanceof Error ? err.message : "Kaldırılırken hata oluştu."
+            );
+        }
+    };
+
+    const handleRescanMonitored = async (id: number) => {
+        setRescanningId(id);
+        setMonitoredError(null);
+        try {
+            const updated = await rescanMonitoredAsset(id);
+            setMonitoredAssets((prev) => prev.map((a) => (a.id === id ? updated : a)));
+        } catch (err) {
+            setMonitoredError(
+                err instanceof Error ? err.message : "Yeniden tarama sırasında hata oluştu."
+            );
+        } finally {
+            setRescanningId(null);
+        }
+    };
+
     return (
         <main className="min-h-screen bg-[#0a0d14] text-slate-100">
             <Header
@@ -99,6 +189,93 @@ export default function Home() {
             />
 
             <div className="mx-auto max-w-7xl px-6 py-8 space-y-6">
+                {/* Araç Çubuğu: İzlenen Varlıklar / İzlemeye Ekle */}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <button
+                        onClick={handleToggleMonitored}
+                        className="text-sm text-emerald-400 hover:text-emerald-300 underline underline-offset-2"
+                    >
+                        {showMonitored ? "İzlenen Varlıkları Gizle" : "İzlenen Varlıklar"}
+                        {monitoredAssets.length > 0 && ` (${monitoredAssets.length})`}
+                    </button>
+
+                    {currentTarget && !loading && !scanning && (
+                        <button
+                            onClick={handleAddToMonitoring}
+                            disabled={addingToMonitoring}
+                            className="flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-sm text-emerald-300 transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            <ShieldPlus size={15} />
+                            {addingToMonitoring
+                                ? "Ekleniyor & Taranıyor..."
+                                : `"${currentTarget}" için İzlemeye Ekle`}
+                        </button>
+                    )}
+                </div>
+
+                {/* İzlenen Varlıklar Paneli */}
+                {showMonitored && (
+                    <div className="rounded-lg border border-slate-700/50 bg-slate-900/40 p-4 space-y-3">
+                        <h2 className="text-sm font-semibold text-slate-200">
+                            İzlenen Varlıklar
+                        </h2>
+
+                        {monitoredError && (
+                            <p className="text-sm text-red-400">{monitoredError}</p>
+                        )}
+
+                        {monitoredLoading ? (
+                            <p className="text-sm text-slate-400">Yükleniyor...</p>
+                        ) : monitoredAssets.length === 0 ? (
+                            <p className="text-sm text-slate-400">
+                                Henüz izlenen bir varlık yok. Arama yaptıktan sonra
+                                &quot;İzlemeye Ekle&quot; butonuyla ekleyebilirsiniz.
+                            </p>
+                        ) : (
+                            <ul className="divide-y divide-slate-800">
+                                {monitoredAssets.map((asset) => (
+                                    <li
+                                        key={asset.id}
+                                        className="flex items-center justify-between py-2.5"
+                                    >
+                                        <div>
+                                            <p className="text-sm text-slate-100">
+                                                {asset.target}
+                                            </p>
+                                            <p className="text-xs text-slate-500">
+                                                {asset.asset_type === "email" ? "E-posta" : "Domain"}
+                                                {" · "}
+                                                {asset.breach_logs.length} sızıntı kaydı
+                                                {" · "}
+                                                {asset.is_verified ? "Doğrulandı" : "Doğrulanmadı"}
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                            <button
+                                                onClick={() => handleRescanMonitored(asset.id)}
+                                                disabled={rescanningId === asset.id}
+                                                aria-label={`${asset.target} için şimdi tara`}
+                                                className="flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                <RefreshCw size={13} className={rescanningId === asset.id ? "animate-spin" : ""} />
+                                                {rescanningId === asset.id ? "Taranıyor..." : "Şimdi Tara"}
+                                            </button>
+                                            <button
+                                                onClick={() => handleRemoveMonitored(asset.id)}
+                                                aria-label={`${asset.target} izlemeden kaldır`}
+                                                className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300"
+                                            >
+                                                <Trash2 size={13} />
+                                                Kaldır
+                                            </button>
+                                        </div>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
+                )}
+
                 {/* İstatistik Kartları */}
                 <StatsCards leaks={leaks} />
 

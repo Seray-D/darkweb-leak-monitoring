@@ -23,6 +23,7 @@ Girdi artık /v1/breach-analytics üzerinden gelen DETAYLI breach dict'leri:
 
 import logging
 from typing import List
+
 from schemas import NormalizedLeak
 
 logger = logging.getLogger(__name__)
@@ -60,7 +61,11 @@ def normalize_xposed_result(raw: dict, email: str) -> NormalizedLeak:
     verified = _is_truthy_flag(raw.get("verified"))
 
     # "<Breach Adı> • <Sızan Veri Türleri>" — LeakIX/OTX ile aynı iki parçalı format.
-    leak_type = f"{breach_name}{PART_SEPARATOR}{xposed_data}" if xposed_data else breach_name
+    leak_type = (
+        f"{breach_name}{PART_SEPARATOR}{xposed_data}"
+        if xposed_data
+        else breach_name
+    )
 
     has_password_exposure = "password" in xposed_data.lower()
     if has_password_exposure and password_risk:
@@ -84,7 +89,9 @@ def normalize_xposed_result(raw: dict, email: str) -> NormalizedLeak:
     )
 
 
-def normalize_xposed_results(raw_results: List[dict], email: str) -> List[NormalizedLeak]:
+def normalize_xposed_results(
+    raw_results: List[dict], email: str
+) -> List[NormalizedLeak]:
     """Toplu normalize etmek için yardımcı fonksiyon."""
     if not isinstance(raw_results, list):
         return []
@@ -92,7 +99,9 @@ def normalize_xposed_results(raw_results: List[dict], email: str) -> List[Normal
     normalized: List[NormalizedLeak] = []
     for item in raw_results:
         if not isinstance(item, dict):
-            logger.warning("XposedOrNot: beklenmeyen kayıt tipi atlandı: %s", type(item))
+            logger.warning(
+                "XposedOrNot: beklenmeyen kayıt tipi atlandı: %s", type(item)
+            )
             continue
         try:
             normalized.append(normalize_xposed_result(item, email))
