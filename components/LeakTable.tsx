@@ -16,6 +16,7 @@ import {
     ShieldAlert,
     Clock,
     Server,
+    Eye,
 } from "lucide-react";
 
 interface LeakTableProps {
@@ -23,11 +24,7 @@ interface LeakTableProps {
     loading: boolean;
 }
 
-// NOT: Projenizde zaten merkezi bir API base URL sabiti/lib'i varsa
-// (örn. lib/api.ts), buradaki sabiti kaldırıp onu kullanın. Backend'de
-// CORS "http://localhost:3000" için açık olduğundan (main.py), backend'in
-// farklı bir origin/port'ta (varsayılan 8000) çalıştığı varsayılmıştır.
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 const COLUMNS = [
     "ASSET",
@@ -45,6 +42,7 @@ const COLUMNS = [
 
 const PART_SEPARATOR = " • ";
 
+// Yardımcı Fonksiyonlar
 function splitLeakType(leakType: string): { title: string; subtitle: string | null } {
     if (!leakType) {
         return { title: "Bilinmeyen", subtitle: null };
@@ -59,19 +57,40 @@ function splitLeakType(leakType: string): { title: string; subtitle: string | nu
     };
 }
 
+function buildInvestigationLink(leak: Leak): string {
+    // Null/Undefined koruması eklendi
+    const raw = String(leak.raw_source || leak.asset || "").trim();
+
+    if (!raw) return "#";
+
+    if (raw.startsWith("http://") || raw.startsWith("https://")) {
+        return raw;
+    }
+
+    const query = encodeURIComponent(raw);
+    switch (leak.market) {
+        case "LeakIX":
+            return `https://leakix.net/search?scope=service&q=${query}`;
+        case "AlienVault OTX":
+            return `https://otx.alienvault.com/pulse/${query}`;
+        default:
+            return `https://www.google.com/search?q=${query}`;
+    }
+}
+
 export default function LeakTable({ leaks, loading }: LeakTableProps) {
     const [search, setSearch] = useState("");
     const [status, setStatus] = useState<string>(STATUS_OPTIONS[0]);
     const [priority, setPriority] = useState<string>(PRIORITY_OPTIONS[0]);
 
-    // Detay görünümü yönetimi (Gerekli yerlerde çağrılması için korundu)
+    // Detay görünümü yönetimi
     const [selectedLeak, setSelectedLeak] = useState<Leak | null>(null);
     const [copiedAssetId, setCopiedAssetId] = useState<number | null>(null);
 
-    // Yerel state: Güncellemeleri anında tabloya yansıtmak için
+    // Yerel state
     const [leaksState, setLeaksState] = useState<Leak[]>(leaks);
 
-    // Domain Bazlı Sızıntı Tarama state'i
+    // Domain / E-posta Tarama state'leri
     const [domainSearchValue, setDomainSearchValue] = useState("");
     const [domainSearchActive, setDomainSearchActive] = useState(false);
     const [domainSearchLoading, setDomainSearchLoading] = useState(false);
@@ -88,6 +107,11 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
         setDomainSearchLoading(true);
         setDomainSearchError(null);
 
+        // Domain araması yapıldığında yerel tablo filtrelerini sıfırla ki gelen sonuçlar gizlenmesin
+        setSearch("");
+        setStatus(STATUS_OPTIONS[0]);
+        setPriority(PRIORITY_OPTIONS[0]);
+
         try {
             const res = await fetch(
                 `${API_BASE_URL}/api/v1/leaks/search-domain?domain=${encodeURIComponent(query)}`
@@ -96,7 +120,7 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
             if (!res.ok) {
                 const errorBody = await res.json().catch(() => null);
                 throw new Error(
-                    errorBody?.detail || "Domain araması sırasında bir hata oluştu."
+                    errorBody?.detail || "Sızıntı araması sırasında bir hata oluştu."
                 );
             }
 
@@ -107,7 +131,7 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
             setDomainSearchError(
                 err instanceof Error
                     ? err.message
-                    : "Domain araması sırasında bir hata oluştu."
+                    : "Sızıntı araması sırasında bir hata oluştu."
             );
         } finally {
             setDomainSearchLoading(false);
@@ -118,7 +142,6 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
         setDomainSearchValue("");
         setDomainSearchActive(false);
         setDomainSearchError(null);
-        // Domain aramasından önceki tam listeye (üst bileşenden gelen prop) geri dön
         setLeaksState(leaks);
     };
 
@@ -170,22 +193,9 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
         );
     }
 
-    if (leaksState.length === 0 && !domainSearchActive) {
-        return (
-            <div className="rounded-lg border border-slate-800 bg-[#101520]">
-                <div className="flex flex-col items-center justify-center gap-3 py-20 text-slate-500">
-                    <Inbox size={28} className="text-slate-600" />
-                    <p className="text-sm">Henüz kayıtlı sızıntı bulunamadı.</p>
-                    <p className="text-xs text-slate-600">
-                        Yukarıdaki arama çubuğunu kullanarak bir tarama başlatın.
-                    </p>
-                </div>
-            </div>
-        );
-    }
-
     return (
         <div>
+            {/* FilterBar */}
             <FilterBar
                 search={search}
                 onSearchChange={setSearch}
@@ -205,7 +215,21 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
                 domainSearchActive={domainSearchActive}
             />
 
-            {filteredLeaks.length === 0 ? (
+            {/* TABLO / BOŞ DURUM ALANI */}
+            {leaksState.length === 0 && !domainSearchActive ? (
+                <div className="rounded-lg border border-slate-800 bg-[#101520]">
+                    <div className="flex flex-col items-center justify-center gap-3 py-20 text-slate-500">
+                        <Inbox size={28} className="text-slate-600" />
+                        <p className="text-sm font-medium text-slate-400">
+                            Henüz kayıtlı sızıntı bulunamadı.
+                        </p>
+                        <p className="text-xs text-slate-600">
+                            Yukarıdaki arama çubuğuna bir domain (örn:{" "}
+                            <code className="text-cyan-500">izmir.bel.tr</code>) veya e-posta girerek tarama başlatabilirsiniz.
+                        </p>
+                    </div>
+                </div>
+            ) : filteredLeaks.length === 0 ? (
                 <div className="rounded-lg border border-slate-800 bg-[#101520]">
                     <div className="flex flex-col items-center justify-center gap-3 py-20 text-slate-500">
                         <SearchX size={28} className="text-slate-600" />
@@ -248,7 +272,7 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
                                                 {leak.asset}
                                             </td>
                                             <td className="whitespace-nowrap px-4 py-3.5 text-slate-300">
-                                                {leak.email_leak}
+                                                {leak.email_leak || "-"}
                                             </td>
                                             <td className="whitespace-nowrap px-4 py-3.5">
                                                 <PasswordCell
@@ -292,7 +316,14 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
                                             </td>
                                             <td className="whitespace-nowrap px-4 py-3.5">
                                                 <div className="flex items-center gap-2 text-slate-500">
-                                                    {/* Soldaki Buton: Doğrudan Harici Kaynağa Gider */}
+                                                    <button
+                                                        type="button"
+                                                        title="Sızıntı Detayını İncele"
+                                                        onClick={() => setSelectedLeak(leak)}
+                                                        className="rounded p-1.5 transition-colors hover:bg-slate-800 hover:text-cyan-400"
+                                                    >
+                                                        <Eye size={14} />
+                                                    </button>
                                                     <a
                                                         href={buildInvestigationLink(leak)}
                                                         target="_blank"
@@ -302,8 +333,6 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
                                                     >
                                                         <ExternalLink size={14} />
                                                     </a>
-
-                                                    {/* Sağdaki Buton: Varlığı Kopyalar */}
                                                     <button
                                                         type="button"
                                                         title="Varlığı kopyala"
@@ -327,10 +356,10 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
                 </div>
             )}
 
-            {/* Sağdan açılan detay paneli (Eğer başka bir yerden setSelectedLeak çağrılırsa diye korundu) */}
+            {/* Sağ Detay Paneli (Drawer) */}
             <LeakDetailDrawer leak={selectedLeak} onClose={() => setSelectedLeak(null)} />
 
-            {/* SOC Operasyonel Müdahale Modalı */}
+            {/* SOC Modal */}
             {selectedLeak && typeof SocLeakDetailModal === "function" && (
                 <SocLeakDetailModal
                     leak={selectedLeak}
@@ -501,22 +530,4 @@ function DetailRow({
             </div>
         </div>
     );
-}
-
-function buildInvestigationLink(leak: Leak): string {
-    const raw = leak.raw_source || leak.asset;
-
-    if (raw.startsWith("http://") || raw.startsWith("https://")) {
-        return raw;
-    }
-
-    const query = encodeURIComponent(raw);
-    switch (leak.market) {
-        case "LeakIX":
-            return `https://leakix.net/search?scope=service&q=${query}`;
-        case "AlienVault OTX":
-            return `https://otx.alienvault.com/pulse/${query}`;
-        default:
-            return `https://www.google.com/search?q=${query}`;
-    }
 }

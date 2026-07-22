@@ -43,7 +43,7 @@ def _priority_from_severity(severity: float | int | None) -> str:
     """LeakIX 'severity' skorunu (0-10 aralığı) proje önceliğine eşler."""
     if severity is None:
         return "Info"
-    if severity >= 8:
+    if severity >= 8: # veya int(severity or 0) >= 8
         return "Critical"
     if severity >= 6:
         return "High"
