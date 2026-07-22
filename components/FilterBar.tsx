@@ -10,23 +10,17 @@ import {
     Globe,
     Loader2,
 } from "lucide-react";
-import { Leak } from "@/lib/types";
+import { Leak, STATUS_VALUES, PRIORITY_VALUES } from "@/lib/types";
 import { exportToCSV, exportToPDF } from "@/lib/exportUtils";
 
-export const STATUS_OPTIONS = [
-    "Tüm Durumlar",
-    "Active",
-    "Resolved",
-    "Monitoring",
-] as const;
+// "Tüm Durumlar" / "Tüm Öncelikler" birer filtre joker'i (sentinel) olarak
+// başa ekleniyor; asıl değer seti artık lib/types.ts'te tek bir yerden
+// yönetiliyor (bkz. STATUS_VALUES / PRIORITY_VALUES) — SocLeakDetailModal
+// (PasswordCell.tsx) ile aynı kaynağı paylaşıyor, bu yüzden artık burada
+// filtrelenebilen bir durum modal'da seçilemiyor diye bir tutarsızlık olmaz.
+export const STATUS_OPTIONS = ["Tüm Durumlar", ...STATUS_VALUES] as const;
 
-export const PRIORITY_OPTIONS = [
-    "Tüm Öncelikler",
-    "Critical",
-    "High",
-    "Medium",
-    "Info",
-] as const;
+export const PRIORITY_OPTIONS = ["Tüm Öncelikler", ...PRIORITY_VALUES] as const;
 
 interface FilterBarProps {
     search: string;

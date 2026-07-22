@@ -176,6 +176,19 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
         });
     }, [leaksState, search, status, priority]);
 
+    const relatedLeaksForSelected = useMemo(() => {
+        if (!selectedLeak) return [];
+        return leaksState.filter((l) => {
+            const sameAsset =
+                l.asset && selectedLeak.asset &&
+                l.asset.toLowerCase() === selectedLeak.asset.toLowerCase();
+            const sameEmail =
+                l.email_leak && selectedLeak.email_leak &&
+                l.email_leak.toLowerCase() === selectedLeak.email_leak.toLowerCase();
+            return sameAsset || sameEmail;
+        });
+    }, [leaksState, selectedLeak]);
+
     const hasActiveFilters =
         search.trim() !== "" ||
         status !== STATUS_OPTIONS[0] ||
@@ -275,12 +288,6 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
                                             </td>
                                             <td className="whitespace-nowrap px-4 py-3.5">
                                                 <PasswordCell
-                                                    password={leak.leaked_password}
-                                                    leakType={leak.leak_type}
-                                                    asset={leak.asset}
-                                                    emailLeak={leak.email_leak}
-                                                    market={leak.market}
-                                                    rawSource={leak.raw_source}
                                                     leak={leak}
                                                     onUpdateLeak={handleUpdateLeak}
                                                 />
@@ -356,7 +363,13 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
             )}
 
             {/* Sağ Detay Paneli (Drawer) */}
-            <LeakDetailDrawer leak={selectedLeak} onClose={() => setSelectedLeak(null)} />
+            <LeakDetailDrawer
+                leak={selectedLeak}
+                relatedLeaks={relatedLeaksForSelected}
+                onClose={() => setSelectedLeak(null)}
+                onUpdateLeak={handleUpdateLeak}
+                onSelectLeak={(l) => setSelectedLeak(l)}
+            />
 
             {/* SOC Modal */}
             {selectedLeak && typeof SocLeakDetailModal === "function" && (
@@ -372,10 +385,16 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
 
 function LeakDetailDrawer({
     leak,
+    relatedLeaks,
     onClose,
+    onUpdateLeak,
+    onSelectLeak,
 }: {
     leak: Leak | null;
+    relatedLeaks: Leak[];
     onClose: () => void;
+    onUpdateLeak: (id: number, changes: Partial<Leak>) => void;
+    onSelectLeak: (leak: Leak) => void;
 }) {
     const isOpen = leak !== null;
     const parsed = leak
@@ -469,23 +488,78 @@ function LeakDetailDrawer({
                                 </div>
                                 <div className="mt-1">
                                     <PasswordCell
-                                        password={leak.leaked_password}
-                                        leakType={leak.leak_type}
-                                        asset={leak.asset}
-                                        emailLeak={leak.email_leak}
-                                        market={leak.market}
-                                        rawSource={leak.raw_source}
+                                        leak={leak}
+                                        onUpdateLeak={onUpdateLeak}
                                     />
                                 </div>
                             </div>
 
                             <div>
-                                <div className="text-xs uppercase tracking-wide text-slate-500">
-                                    Ham Kaynak Kimliği (raw_source)
+                                <div className="mb-2 flex items-center gap-1.5 text-xs uppercase tracking-wide text-slate-500">
+                                    <Server size={12} />
+                                    Sızıntı Kaynakları ({relatedLeaks.length})
                                 </div>
-                                <code className="mt-1 block break-all rounded-md border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-400">
-                                    {leak.raw_source || "-"}
-                                </code>
+                                <div className="overflow-hidden rounded-md border border-slate-800">
+                                    <table className="w-full border-collapse text-left text-xs">
+                                        <thead>
+                                            <tr className="border-b border-slate-800 bg-slate-900/60 text-slate-500">
+                                                <th className="px-2.5 py-2 font-medium">E-Posta / Varlık</th>
+                                                <th className="px-2.5 py-2 font-medium">Sızıntı Kaynağı</th>
+                                                <th className="px-2.5 py-2 font-medium">Kategori</th>
+                                                <th className="px-2.5 py-2 font-medium">Tarih</th>
+                                                <th className="px-2.5 py-2 text-right font-medium">İşlem</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {relatedLeaks.map((item) => {
+                                                const isActive = item.id === leak.id;
+                                                const sourceLabel = item.raw_source?.trim() || item.market;
+
+                                                return (
+                                                    <tr
+                                                        key={item.id}
+                                                        className={`border-b border-slate-800/60 last:border-b-0 ${isActive ? "bg-cyan-500/5" : ""
+                                                            }`}
+                                                    >
+                                                        <td className="px-2.5 py-2 font-mono text-slate-300">
+                                                            {item.email_leak || item.asset}
+                                                        </td>
+                                                        <td
+                                                            className="max-w-[160px] truncate px-2.5 py-2 text-slate-400"
+                                                            title={sourceLabel}
+                                                        >
+                                                            <a
+                                                                href={buildInvestigationLink(item)}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="hover:text-cyan-400 hover:underline"
+                                                            >
+                                                                {sourceLabel}
+                                                            </a>
+                                                        </td>
+                                                        <td className="px-2.5 py-2 text-slate-400">
+                                                            {splitLeakType(item.leak_type).title}
+                                                        </td>
+                                                        <td className="whitespace-nowrap px-2.5 py-2 font-mono text-slate-500">
+                                                            {item.discovery_date}
+                                                        </td>
+                                                        <td className="px-2.5 py-2 text-right">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => onSelectLeak(item)}
+                                                                disabled={isActive}
+                                                                title="Detay Gör"
+                                                                className="rounded p-1 text-slate-400 transition-colors hover:bg-slate-800 hover:text-cyan-400 disabled:opacity-40"
+                                                            >
+                                                                <Eye size={13} />
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         </div>
 

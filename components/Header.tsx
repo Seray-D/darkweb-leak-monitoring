@@ -4,7 +4,7 @@ import { useState, FormEvent } from "react";
 import { Radar, Search, Loader2, ShieldAlert } from "lucide-react";
 
 interface HeaderProps {
-    onScan: (email: string) => Promise<void>;
+    onScan: (target: string) => Promise<void>;
     scanning: boolean;
     totalLeaks: number;
 }
@@ -51,7 +51,7 @@ export default function Header({ onScan, scanning, totalLeaks }: HeaderProps) {
                                 type="text"
                                 value={query}
                                 onChange={(e) => setQuery(e.target.value)}
-                                placeholder="E-posta veya domain girin (ör. ornek@sirket.com)"
+                                placeholder="E-posta veya domain girin (ör. izmir.bel.tr)"
                                 disabled={scanning}
                                 className="w-full bg-transparent px-3 py-2.5 text-sm text-slate-200 placeholder:text-slate-600 outline-none disabled:opacity-50"
                             />

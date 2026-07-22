@@ -29,6 +29,7 @@ import {
     ExternalLink,
 } from "lucide-react";
 import type { Leak, LeakComment, PasswordExposureCategory, PwnedPasswordResult } from "@/lib/types";
+import { CERTAINTY_VALUES, STATUS_VALUES, PRIORITY_VALUES } from "@/lib/types";
 import { checkPassword } from "@/lib/api";
 
 interface PasswordCellProps {
@@ -37,7 +38,7 @@ interface PasswordCellProps {
 }
 
 /* ------------------------------------------------------------------ */
-/* 1) Sızan Bilgi Tipi (Target Scope) — dinamik sınıflandırma          */
+/* 1) Sızan Bilgi Tipi (Target Scope) — dinamik sınıflandırma         */
 /* ------------------------------------------------------------------ */
 
 const STEALER_HINTS = [
@@ -141,7 +142,7 @@ function classifyExposure(params: {
 }
 
 /* ------------------------------------------------------------------ */
-/* 2) Şifre Durumu & Görünüm — format tespiti                           */
+/* 2) Şifre Durumu & Görünüm — format tespiti                         */
 /* ------------------------------------------------------------------ */
 
 interface PasswordFormatInfo {
@@ -182,7 +183,7 @@ function detectPasswordFormat(raw?: string): PasswordFormatInfo {
 }
 
 /* ------------------------------------------------------------------ */
-/* 3) Kaynakta İncele linki (LeakIX / OTX / diğer)                      */
+/* 3) Kaynakta İncele linki (LeakIX / OTX / diğer)                    */
 /* ------------------------------------------------------------------ */
 
 export function buildInvestigationLink(leak: Leak): string {
@@ -199,8 +200,8 @@ export function buildInvestigationLink(leak: Leak): string {
 }
 
 /* ------------------------------------------------------------------ */
-/* 3.5) HIBP "Pwned Passwords" — Hash Bazlı Parola Sızıntı Kontrolü      */
-/*      (k-Anonymity model, bkz. lib/api.ts -> checkPassword)           */
+/* 3.5) HIBP "Pwned Passwords" — Hash Bazlı Parola Sızıntı Kontrolü     */
+/*     (k-Anonymity model, bkz. lib/api.ts -> checkPassword)            */
 /* ------------------------------------------------------------------ */
 
 type PwnedCheckState =
@@ -347,7 +348,7 @@ function HibpPasswordCheckSection({
 }
 
 /* ------------------------------------------------------------------ */
-/* 4) Tablo hücresi (tetikleyici buton)                                 */
+/* 4) Tablo hücresi (tetikleyici buton)                                */
 /* ------------------------------------------------------------------ */
 
 export default function PasswordCell({ leak, onUpdateLeak }: PasswordCellProps) {
@@ -387,12 +388,12 @@ export default function PasswordCell({ leak, onUpdateLeak }: PasswordCellProps) 
 }
 
 /* ------------------------------------------------------------------ */
-/* 5) SOC Leak Details & Case Management — 2 sütunlu ana modal           */
+/* 5) SOC Leak Details & Case Management — 2 sütunlu ana modal          */
 /* ------------------------------------------------------------------ */
 
-const CERTAINTY_OPTIONS = ["Unsure", "Confirmed", "False Positive"];
-const STATUS_OPTIONS_MODAL = ["Active", "In Progress", "Completed", "Ignored"];
-const PRIORITY_OPTIONS_MODAL = ["Info", "Low", "Medium", "High", "Critical"];
+const CERTAINTY_OPTIONS = [...CERTAINTY_VALUES];
+const STATUS_OPTIONS_MODAL = [...STATUS_VALUES];
+const PRIORITY_OPTIONS_MODAL = [...PRIORITY_VALUES];
 
 export function SocLeakDetailModal({
     leak,
@@ -622,13 +623,13 @@ export function SocLeakDetailModal({
                                         </div>
                                         <div className="mt-1 space-y-0.5 pl-4 font-mono text-[11px] text-slate-300">
                                             <div className="flex items-start gap-1">
-                                                <span>-</span>
-                                                <span>Hostname: {leak.system_info?.hostname || "-"}</span>
+                                                <MonitorSmartphone size={11} className="mt-0.5 shrink-0 text-slate-600" />
+                                                <span>Hostname: {leak.hostname || leak.system_info?.hostname || "-"}</span>
                                             </div>
                                             <div className="flex items-start gap-1">
                                                 <FolderCog size={11} className="mt-0.5 shrink-0 text-slate-600" />
                                                 <span className="break-all">
-                                                    Malware Located at: {leak.system_info?.malware_path || "-"}
+                                                    Malware Located at: {leak.malware_path || leak.system_info?.malware_path || "-"}
                                                 </span>
                                             </div>
                                         </div>
@@ -638,13 +639,18 @@ export function SocLeakDetailModal({
 
                             {/* Kaynakta İncele Butonu */}
                             <a
-                                href={buildInvestigationLink(leak)}
+                                href={leak.url?.trim() ? leak.url : buildInvestigationLink(leak)}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="flex w-full items-center justify-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-sm font-medium text-emerald-400 transition-colors hover:bg-emerald-500/20"
                             >
                                 <ExternalLink size={15} />
                                 Kaynakta İncele (IR)
+                                {leak.url?.trim() && (
+                                    <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] normal-case text-emerald-300">
+                                        Doğrudan Kaynak
+                                    </span>
+                                )}
                             </a>
                         </div>
 
@@ -680,43 +686,36 @@ export function SocLeakDetailModal({
                                 <SectionLabel icon={<MessageSquare size={13} />} text="Comments" tone="slate" />
                                 <div className="mt-2 max-h-56 flex-1 space-y-2 overflow-y-auto rounded-md border border-slate-800 bg-slate-900/40 p-3">
                                     {comments.length === 0 ? (
-                                        <p className="text-xs text-slate-500">No comments yet.</p>
+                                        <p className="text-xs text-slate-500 italic">Henüz yorum eklenmemiş.</p>
                                     ) : (
                                         comments.map((c) => (
-                                            <div
-                                                key={c.id}
-                                                className="rounded-md border border-slate-800 bg-slate-900/60 px-3 py-2"
-                                            >
+                                            <div key={c.id} className="rounded border border-slate-800/80 bg-slate-900/80 p-2 text-xs">
                                                 <div className="flex items-center justify-between text-[10px] text-slate-500">
-                                                    <span className="font-medium text-slate-400">
-                                                        {c.author || "Analyst"}
-                                                    </span>
-                                                    <span className="font-mono">{c.created_at}</span>
+                                                    <span className="font-medium text-emerald-400">{c.author}</span>
+                                                    <span>{c.created_at}</span>
                                                 </div>
-                                                <p className="mt-1 whitespace-pre-wrap text-xs text-slate-200">
-                                                    {c.text}
-                                                </p>
+                                                <p className="mt-1 text-slate-300 whitespace-pre-wrap">{c.text}</p>
                                             </div>
                                         ))
                                     )}
                                 </div>
-
-                                <textarea
-                                    value={draftComment}
-                                    onChange={(e) => setDraftComment(e.target.value)}
-                                    placeholder="Leave a comment..."
-                                    rows={3}
-                                    className="mt-3 w-full resize-none rounded-md border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:border-emerald-500/50 focus:outline-none"
-                                />
-                                <button
-                                    type="button"
-                                    onClick={handleAddComment}
-                                    disabled={!draftComment.trim()}
-                                    className="mt-2 flex items-center justify-center gap-2 self-end rounded-md border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-xs font-medium text-emerald-400 transition-colors hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-40"
-                                >
-                                    <Send size={13} />
-                                    Add Comment
-                                </button>
+                                <div className="mt-2 flex gap-2">
+                                    <input
+                                        type="text"
+                                        value={draftComment}
+                                        onChange={(e) => setDraftComment(e.target.value)}
+                                        onKeyDown={(e) => e.key === "Enter" && handleAddComment()}
+                                        placeholder="Analist notu ekle..."
+                                        className="flex-1 rounded-md border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:border-emerald-500/50 focus:outline-none"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={handleAddComment}
+                                        className="flex items-center justify-center rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-emerald-400 transition-colors hover:bg-emerald-500/20"
+                                    >
+                                        <Send size={14} />
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -727,45 +726,29 @@ export function SocLeakDetailModal({
 }
 
 /* ------------------------------------------------------------------ */
-/* Yardımcı küçük bileşenler                                            */
+/* Yardımcı Bileşenler                                                */
 /* ------------------------------------------------------------------ */
 
-function SectionLabel({
-    icon,
-    text,
-    tone = "slate",
-}: {
-    icon: React.ReactNode;
-    text: string;
-    tone?: "slate" | "emerald";
-}) {
+function SectionLabel({ icon, text, tone }: { icon: React.ReactNode; text: string; tone: "emerald" | "slate" }) {
+    const colorClass = tone === "emerald" ? "text-emerald-400" : "text-slate-400";
     return (
-        <div
-            className={`flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide ${tone === "emerald" ? "text-emerald-500" : "text-slate-500"
-                }`}
-        >
+        <div className={`flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider ${colorClass}`}>
             {icon}
-            {text}
+            <span>{text}</span>
         </div>
     );
 }
 
-function TimestampBox({
-    icon,
-    label,
-    value,
-}: {
-    icon: React.ReactNode;
-    label: string;
-    value?: string;
-}) {
+function TimestampBox({ icon, label, value }: { icon: React.ReactNode; label: string; value?: string }) {
     return (
-        <div className="rounded-md border border-emerald-900/40 bg-emerald-950/10 px-3 py-2.5">
-            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-500">
+        <div className="rounded-md border border-emerald-900/40 bg-emerald-950/10 px-3 py-2">
+            <div className="flex items-center gap-1 text-[10px] uppercase text-slate-500">
                 {icon}
-                {label}
+                <span>{label}</span>
             </div>
-            <div className="mt-1 font-mono text-xs text-emerald-100">{value || "-"}</div>
+            <div className="mt-1 font-mono text-xs text-slate-300 truncate" title={value || "-"}>
+                {value || "-"}
+            </div>
         </div>
     );
 }
@@ -774,7 +757,7 @@ function DetailLine({
     label,
     value,
     icon,
-    isLink = false,
+    isLink,
 }: {
     label: string;
     value?: string;
@@ -783,14 +766,14 @@ function DetailLine({
 }) {
     return (
         <div className="flex items-start gap-1.5">
-            {icon}
+            {icon && <span className="mt-0.5 shrink-0">{icon}</span>}
             <span className="shrink-0 text-slate-500">{label}:</span>
             {isLink && value ? (
                 <a
                     href={value}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="break-all font-mono text-emerald-400 underline-offset-2 hover:underline"
+                    className="truncate font-mono text-emerald-400 hover:underline"
                 >
                     {value}
                 </a>
@@ -808,33 +791,26 @@ function AttributeSelect({
     onChange,
 }: {
     label: string;
-    value: string;
-    options: string[];
-    onChange: (value: string) => void;
+    value?: string;
+    options: readonly string[];
+    onChange: (val: string) => void;
 }) {
-    const allOptions = options.includes(value) || !value ? options : [value, ...options];
-
     return (
-        <div>
-            <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                {label}
-            </label>
-            <div className="relative mt-1">
+        <div className="space-y-1">
+            <label className="text-[10px] uppercase tracking-wider text-slate-400">{label}</label>
+            <div className="relative">
                 <select
                     value={value || ""}
                     onChange={(e) => onChange(e.target.value)}
-                    className="w-full appearance-none rounded-md border border-slate-800 bg-slate-900/60 px-3 py-2 pr-7 text-xs text-slate-200 focus:border-emerald-500/50 focus:outline-none"
+                    className="w-full appearance-none rounded-md border border-slate-800 bg-slate-900/80 px-2.5 py-1.5 pr-6 text-xs text-slate-200 focus:border-emerald-500/50 focus:outline-none"
                 >
-                    {allOptions.map((opt) => (
+                    {options.map((opt) => (
                         <option key={opt} value={opt}>
                             {opt}
                         </option>
                     ))}
                 </select>
-                <ChevronDown
-                    size={13}
-                    className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-500"
-                />
+                <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
             </div>
         </div>
     );

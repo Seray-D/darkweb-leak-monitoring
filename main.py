@@ -3,10 +3,11 @@ FastAPI ana uygulama.
 
 /api/v1/scan tetiklendiğinde:
   1) Veritabanındaki TÜM eski kayıtlar silinir (temiz sayfa),
-  2) XposedOrNot, LeakIX, AlienVault OTX ve BreachDirectory servisleri PARALEL olarak sorgulanır,
+  2) Target e-posta ise doğrudan, domain ise kurumsal e-posta kalıpları (info@, admin@ vb.) ile birlikte
+     XposedOrNot, LeakIX, AlienVault OTX ve BreachDirectory servisleri PARALEL olarak sorgulanır,
   3) Sonuçlar ortak NormalizedLeak şemasına göre tek listede birleştirilir,
   4) Aynı taramada birden fazla kaynaktan gelen birebir aynı kayıtlar
-     (asset, email_leak, leak_type, raw_source) bazında tekilleştirilir,
+     (asset, email_leak, leak_type, raw_source, discovery_date) bazında tekilleştirilir,
   5) Kalan kayıtlar veritabanına yazılır ve Telegram/Slack bildirimi tetiklenir.
 
 Ayrıca /api/v1/leaks/clear endpoint'i ile (örn. frontend ilk açılışta / F5'te)
@@ -94,7 +95,7 @@ async def test_otx_endpoint(domain: str):
         "service": "AlienVault OTX",
         "domain": domain,
         "total_pulses_found": len(results),
-        "results": results
+        "results": results,
     }
 
 
@@ -106,7 +107,7 @@ async def test_leakix_endpoint(domain: str):
         "service": "LeakIX",
         "domain": domain,
         "count": len(results),
-        "results": results
+        "results": results,
     }
 
 
@@ -120,7 +121,7 @@ async def test_xposed_endpoint(email: str):
         "email": email,
         "raw_response": raw_data,
         "normalized_count": len(normalized),
-        "results": normalized
+        "results": normalized,
     }
 
 
@@ -132,24 +133,25 @@ async def test_breachdirectory_endpoint(email: str):
         "service": "BreachDirectory",
         "email": email,
         "count": len(results),
-        "results": results
+        "results": results,
     }
 
 
-# Dedup anahtarı: (asset, email_leak, leak_type, raw_source)
-DedupKey = Tuple[str, str, str, str]
+# Dedup anahtarı: (asset, email_leak, leak_type, raw_source, discovery_date)
+DedupKey = Tuple[str, str, str, str, str]
 
 HIBP_RANGE_URL = "https://api.pwnedpasswords.com/range/{prefix}"
 SHA1_PREFIX_RE = re.compile(r"^[A-Fa-f0-9]{5}$")
 
 
-def _dedup_key(asset: str, email_leak: str, leak_type: str, raw_source: str) -> DedupKey:
-    """Karşılaştırmayı tutarlı yapmak için None -> '' normalize edilir."""
+def _dedup_key(asset: str, email_leak: str, leak_type: str, raw_source: str, discovery_date: str = "") -> DedupKey:
+    """Karşılaştırmayı tutarlı yapmak için None -> '' normalize edilir ve discovery_date dahil edilir."""
     return (
         (asset or "").lower().strip(),
         (email_leak or "").lower().strip(),
         (leak_type or "").lower().strip(),
         (raw_source or "").lower().strip(),
+        str(discovery_date or "").strip(),
     )
 
 
@@ -287,7 +289,7 @@ def list_monitored_assets(db: Session = Depends(get_db)):
 
 @app.post("/api/v1/assets/{asset_id}/scan", response_model=MonitoredAssetOut)
 async def rescan_monitored_asset(asset_id: int, db: Session = Depends(get_db)):
-    """"Şimdi Tara" butonunun çağırdığı manuel yeniden tarama endpoint'i."""
+    """Şimdi Tara butonunun çağırdığı manuel yeniden tarama endpoint'i."""
     asset = db.query(MonitoredAsset).filter(MonitoredAsset.id == asset_id).first()
     if not asset:
         raise HTTPException(status_code=404, detail="İzlenen varlık bulunamadı.")
@@ -443,51 +445,80 @@ async def check_password(prefix: str):
 async def _gather_leaks_for_asset(asset: MonitoredAsset) -> List[NormalizedLeak]:
     """
     MonitoredAsset.asset_type'a göre uygun servisleri paralel çağırır.
-    Ad-hoc /scan mantığı ile tam 1:1 uyumlu şekilde sorgular ve birleştirir.
+    /api/v1/scan endpoint'i ile BİREBİR AYNI mantıkte (domain için kurumsal 
+    e-posta kalıpları dahil) sorgulama yapar.
     """
     target = asset.target
     all_results: List[NormalizedLeak] = []
 
-    if asset.asset_type == "email":
-        domain = target.split("@")[-1]
-        xposed_raw, leakix_results, otx_results, bd_results = await asyncio.gather(
-            _safe_xposed_check(target),
-            leakix_service.search_leakix(domain),
-            otx_service.search_otx(domain, target),
-            breachdirectory_service.search_breachdirectory(target),
-            return_exceptions=True,
-        )
+    is_email = asset.asset_type == "email" or "@" in target
+    domain = None
+    emails_to_scan = []
 
-        if not isinstance(xposed_raw, Exception):
-            all_results.extend(normalize_xposed_results(xposed_raw, target))
+    if is_email:
+        emails_to_scan = [target.lower()]
+    else:
+        domain = _extract_domain(target)
+        if not domain:
+            domain = target
+        
+        emails_to_scan = [
+            f"info@{domain}",
+            f"admin@{domain}",
+            f"destek@{domain}",
+            f"iletisim@{domain}",
+            f"hr@{domain}",
+        ]
 
-        if not isinstance(leakix_results, Exception):
-            all_results.extend(leakix_results)
+    tasks = []
+    task_metadata = []
 
-        if not isinstance(otx_results, Exception):
-            all_results.extend(otx_results)
+    if domain and not is_email:
+        tasks.append(leakix_service.search_leakix(domain))
+        task_metadata.append({"type": "leakix"})
 
-        if not isinstance(bd_results, Exception):
-            all_results.extend(bd_results)
+        tasks.append(otx_service.search_otx(domain, ""))
+        task_metadata.append({"type": "otx_domain"})
 
-    else:  # domain
-        leakix_results, otx_results = await asyncio.gather(
-            leakix_service.search_leakix(target),
-            otx_service.search_otx(target, ""),
-            return_exceptions=True,
-        )
+    for email in emails_to_scan:
+        tasks.append(_safe_xposed_check(email))
+        task_metadata.append({"type": "xposed", "email": email})
 
-        if not isinstance(leakix_results, Exception):
-            all_results.extend(leakix_results)
+        otx_query_domain = domain if domain else email.split("@")[-1]
+        tasks.append(otx_service.search_otx(otx_query_domain, email))
+        task_metadata.append({"type": "otx_email"})
 
-        if not isinstance(otx_results, Exception):
-            all_results.extend(otx_results)
+        tasks.append(breachdirectory_service.search_breachdirectory(email))
+        task_metadata.append({"type": "breachdirectory"})
 
-    # Ad-hoc /scan ile birebir aynı dedup algoritmasını uygula
+    responses = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for meta, resp in zip(task_metadata, responses):
+        if isinstance(resp, Exception) or not resp:
+            continue
+
+        srv_type = meta.get("type")
+
+        if srv_type == "xposed":
+            email = meta.get("email", "")
+            normalized = normalize_xposed_results(resp, email)
+            all_results.extend(normalized)
+        elif isinstance(resp, list):
+            for item in resp:
+                if isinstance(item, NormalizedLeak):
+                    all_results.append(item)
+
     seen_keys: set = set()
     deduped_results: List[NormalizedLeak] = []
+    
     for item in all_results:
-        key = _dedup_key(item.asset, item.email_leak, item.leak_type, item.raw_source)
+        key = _dedup_key(
+            item.asset, 
+            item.email_leak, 
+            item.leak_type, 
+            item.raw_source, 
+            str(item.discovery_date or "")
+        )
         if key in seen_keys:
             continue
         seen_keys.add(key)
@@ -500,33 +531,40 @@ def _persist_asset_leaks(
     asset: MonitoredAsset, leaks: List[NormalizedLeak], db: Session
 ) -> int:
     """
-    NormalizedLeak listesini AssetBreachLog'a yazar.
-    Mükerrer veya katlanmış verileri engeller, ad-hoc /scan endpoint'i ile
-    tam olarak 1:1 sayıda kayıt oluşturur.
+    NormalizedLeak listesini AssetBreachLog tablosuna birebir tüm detay alanlarıyla yazar.
+    /api/v1/scan ile aynı sayıda ve kalitede kayıt üretilmesini sağlar.
     """
-    # 1. İlişkili eski kayıtları sil
     db.query(AssetBreachLog).filter(
         AssetBreachLog.asset_id == asset.id
     ).delete(synchronize_session=False)
     db.commit()
 
-    # 2. Birebir ad-hoc scan ile aynı sayıda record oluştur
     new_logs = [
         AssetBreachLog(
             asset_id=asset.id,
-            breach_name=item.raw_source or item.market or "Unknown Leak",
-            breach_date=item.discovery_date or item.last_seen or None,
-            exposed_data_types=item.leak_type or "",
+            asset=item.asset,
+            email_leak=item.email_leak,
+            leaked_password=item.leaked_password,
+            leak_type=item.leak_type,
+            market=item.market,
+            last_seen=item.last_seen,
+            certainty=item.certainty,
+            status=item.status,
+            priority=item.priority,
+            discovery_date=item.discovery_date,
+            raw_source=item.raw_source or "",
+            url=item.url or "",
+            ip_info=item.ip_info or "",
+            hostname=item.hostname or "",
+            malware_path=item.malware_path or "",
         )
         for item in leaks
     ]
 
-    # 3. Veritabanına kaydet
     if new_logs:
         db.add_all(new_logs)
         db.commit()
 
-    # 4. İlişkiyi sıfırla ve tazele
     db.expire(asset, ["breach_logs"])
     db.refresh(asset)
 
@@ -549,72 +587,116 @@ async def _safe_xposed_check(email: str) -> list:
 
 
 @app.get("/api/v1/scan")
-async def scan(email: str, db: Session = Depends(get_db)):
-    """Verilen e-posta için canlı tarama yapar."""
-    if not email or "@" not in email:
+async def scan(target: str, db: Session = Depends(get_db)):
+    """
+    Verilen hedef (e-posta veya domain) için canlı tarama yapar.
+    
+    1) Veritabanındaki tüm eski sızıntı kayıtlarını temizler.
+    2) Target e-posta ise doğrudan, domain ise varsayılan kurumsal e-postalarla birlikte 
+       LeakIX, OTX, XposedOrNot ve BreachDirectory servislerini eşzamanlı (paralel) sorgular.
+    3) Sonuçları ortak NormalizedLeak formatında toplar ve mükerrer kayıtları ayıklar.
+    4) Güncel sonuçları DB'ye yazar ve bildirim servisini tetikler.
+    """
+    if not target or not target.strip():
         raise HTTPException(
-            status_code=400, detail="Geçerli bir e-posta adresi girin."
+            status_code=400, detail="Geçerli bir e-posta veya domain girin."
         )
 
-    domain = email.split("@")[-1]
+    cleaned_target = target.strip()
+    is_email = "@" in cleaned_target
 
-    # --- 0. Sıfırla ---
+    domain = None
+    emails_to_scan = []
+
+    if is_email:
+        emails_to_scan = [cleaned_target.lower()]
+    else:
+        domain = _extract_domain(cleaned_target)
+        if not domain:
+            raise HTTPException(
+                status_code=400, detail="Geçerli bir domain girin."
+            )
+        
+        emails_to_scan = [
+            f"info@{domain}",
+            f"admin@{domain}",
+            f"destek@{domain}",
+            f"iletisim@{domain}",
+            f"hr@{domain}",
+        ]
+
     deleted_count = _clear_all_leaks(db)
     logger.info(
-        "Yeni tarama öncesi veritabanı sıfırlandı (email=%s), silinen kayıt sayısı: %s",
-        email,
+        "Yeni tarama öncesi veritabanı sıfırlandı (target=%s), silinen kayıt sayısı: %s",
+        cleaned_target,
         deleted_count,
     )
 
-    # --- 1. Paralel Sorgular ---
-    xposed_raw, leakix_results, otx_results, bd_results = await asyncio.gather(
-        _safe_xposed_check(email),
-        leakix_service.search_leakix(domain),
-        otx_service.search_otx(domain, email),
-        breachdirectory_service.search_breachdirectory(email),
-        return_exceptions=True,
-    )
+    tasks = []
+    task_metadata = []
+
+    if domain:
+        tasks.append(leakix_service.search_leakix(domain))
+        task_metadata.append({"type": "leakix"})
+
+        tasks.append(otx_service.search_otx(domain, ""))
+        task_metadata.append({"type": "otx_domain"})
+
+    for email in emails_to_scan:
+        tasks.append(_safe_xposed_check(email))
+        task_metadata.append({"type": "xposed", "email": email})
+
+        otx_query_domain = domain if domain else email.split("@")[-1]
+        tasks.append(otx_service.search_otx(otx_query_domain, email))
+        task_metadata.append({"type": "otx_email"})
+
+        tasks.append(breachdirectory_service.search_breachdirectory(email))
+        task_metadata.append({"type": "breachdirectory"})
+
+    responses = await asyncio.gather(*tasks, return_exceptions=True)
 
     all_results: List[NormalizedLeak] = []
 
-    if isinstance(xposed_raw, Exception):
-        logger.error("XposedOrNot sorgusu hata verdi: %s", xposed_raw)
-    else:
-        xposed_normalized = normalize_xposed_results(xposed_raw, email)
-        all_results.extend(xposed_normalized)
+    for meta, resp in zip(task_metadata, responses):
+        if isinstance(resp, Exception):
+            logger.error(
+                "Servis sorgulama hatası (%s): %s", meta.get("type"), resp
+            )
+            continue
+        if not resp:
+            continue
 
-    if isinstance(leakix_results, Exception):
-        logger.error("LeakIX sorgusu hata verdi: %s", leakix_results)
-    else:
-        all_results.extend(leakix_results)
+        srv_type = meta.get("type")
 
-    if isinstance(otx_results, Exception):
-        logger.error("OTX sorgusu hata verdi: %s", otx_results)
-    else:
-        all_results.extend(otx_results)
-
-    if isinstance(bd_results, Exception):
-        logger.error("BreachDirectory sorgusu hata verdi: %s", bd_results)
-    else:
-        all_results.extend(bd_results)
+        if srv_type == "xposed":
+            email = meta.get("email", "")
+            normalized = normalize_xposed_results(resp, email)
+            all_results.extend(normalized)
+        elif isinstance(resp, list):
+            for item in resp:
+                if isinstance(item, NormalizedLeak):
+                    all_results.append(item)
 
     if not all_results:
+        logger.info("Tarama tamamlandı, hiçbir sızıntı bulunamadı (target=%s).", cleaned_target)
         return []
 
-    # --- 2. Mükerrer Kayıtları Ele ---
     seen_keys: set = set()
-    new_results: List[NormalizedLeak] = []
+    deduped_results: List[NormalizedLeak] = []
+
     for item in all_results:
-        key = _dedup_key(item.asset, item.email_leak, item.leak_type, item.raw_source)
+        key = _dedup_key(
+            item.asset, 
+            item.email_leak, 
+            item.leak_type, 
+            item.raw_source, 
+            str(item.discovery_date or "")
+        )
         if key in seen_keys:
             continue
         seen_keys.add(key)
-        new_results.append(item)
+        deduped_results.append(item)
 
-    if not new_results:
-        return []
-
-    # --- 3. Kaydet ---
     db_objects = [
         BreachLog(
             asset=item.asset,
@@ -628,17 +710,30 @@ async def scan(email: str, db: Session = Depends(get_db)):
             priority=item.priority,
             discovery_date=item.discovery_date,
             raw_source=item.raw_source or "",
+            url=item.url or "",
+            ip_info=item.ip_info or "",
+            hostname=item.hostname or "",
+            malware_path=item.malware_path or "",
         )
-        for item in new_results
+        for item in deduped_results
     ]
 
     db.add_all(db_objects)
     db.commit()
+
     for obj in db_objects:
         db.refresh(obj)
 
-    # --- 4. Bildirim Gönder ---
-    await notification_service.send_leak_alert(db_objects)
+    try:
+        await notification_service.send_leak_alert(db_objects)
+    except Exception as exc:
+        logger.error("Bildirim gönderilirken hata oluştu: %s", exc)
+
+    logger.info(
+        "Tarama başarıyla tamamlandı (target=%s): %s adet tekil kayıt veritabanına işlendi.",
+        cleaned_target,
+        len(db_objects),
+    )
 
     return db_objects
 
@@ -656,7 +751,8 @@ async def _scheduled_scan_all_assets() -> None:
     logger.info("⏰ [Scheduler] Periyodik tarama başladı.")
     db = SessionLocal()
     try:
-        for asset in db.query(MonitoredAsset).all():
+        assets = db.query(MonitoredAsset).all()
+        for asset in assets:
             try:
                 new_count = await _scan_and_persist_asset(asset, db)
                 if new_count:

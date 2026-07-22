@@ -1,3 +1,42 @@
+/* ------------------------------------------------------------------ */
+/* Tek Kaynak (Single Source of Truth) — Certainty / Status / Priority  */
+/* değer setleri. Önceden FilterBar.tsx (STATUS_OPTIONS/PRIORITY_OPTIONS) */
+/* ve PasswordCell.tsx (CERTAINTY_OPTIONS/STATUS_OPTIONS_MODAL/          */
+/* PRIORITY_OPTIONS_MODAL) içinde birbirinden bağımsız, eksik ve         */
+/* tutarsız olarak tanımlanıyordu (ör. modal'da "Resolved"/"Monitoring"  */
+/* yoktu, filtre panelinde "Completed"/"In Progress"/"Ignored" yoktu).   */
+/* Artık HER İKİ bileşen de bu dizileri import ederek kullanıyor; yeni   */
+/* bir durum eklemek/çıkarmak istendiğinde tek bir yer güncellenir.      */
+/* ------------------------------------------------------------------ */
+
+export const CERTAINTY_VALUES = [
+    "Unsure",
+    "Confirmed",
+    "Verified",
+    "False Positive",
+] as const;
+
+export const STATUS_VALUES = [
+    "Active",
+    "In Progress",
+    "Monitoring",
+    "Resolved",
+    "Completed",
+    "Ignored",
+] as const;
+
+export const PRIORITY_VALUES = [
+    "Info",
+    "Low",
+    "Medium",
+    "High",
+    "Critical",
+] as const;
+
+export type CertaintyValue = (typeof CERTAINTY_VALUES)[number];
+export type StatusValue = (typeof STATUS_VALUES)[number];
+export type PriorityValue = (typeof PRIORITY_VALUES)[number];
+
 export interface SystemInfo {
     hostname?: string;
     malware_path?: string;
@@ -18,16 +57,14 @@ export interface Leak {
     leak_type: string;
     market: string;
     last_seen: string;
-    certainty: "Unsure" | "Confirmed" | "Verified" | "False Positive" | string;
-    status:
-    | "Active"
-    | "Resolved"
-    | "Monitoring"
-    | "Completed"
-    | "In Progress"
-    | "Ignored"
-    | string;
-    priority: "Info" | "Low" | "Medium" | "High" | "Critical" | string;
+    // NOT: `| string` fallback'i kasıtlı olarak korunuyor — backend, henüz
+    // burada tanımlanmamış bir değer dönerse (ör. yeni bir migration
+    // sırasında) TypeScript derlemesi kırılmasın diye. Ama UI'da seçilebilir
+    // / filtrelenebilir olması gereken TÜM değerler CERTAINTY_VALUES /
+    // STATUS_VALUES / PRIORITY_VALUES içinde olmalı.
+    certainty: CertaintyValue | string;
+    status: StatusValue | string;
+    priority: PriorityValue | string;
     discovery_date: string;
     // NOT: LeakTable.tsx'teki detay Drawer'ı ve şimdi de PDF/CSV raporlama
     // modülü bu alanı kullanıyor (LeakIX event id / OTX pulse id / XposedOrNot
@@ -36,12 +73,18 @@ export interface Leak {
     raw_source: string;
 
     // --- SOC Case Management ekleri (v2 - 2 sütunlu modal) ---
-    // Sızıntının/login panelinin tam adresi (varsa). Backend her zaman
-    // dolduramayabilir (LeakIX servis kayıtları hariç genelde boş "").
+    // Sızıntının/login panelinin tam adresi (varsa). Backend BreachLog /
+    // AssetBreachLog üzerinden artık DÜZ (flat) string olarak dolduruyor.
     url?: string;
     // Stealer log / açık servis taramasından gelen IP adresi bilgisi.
     ip_info?: string;
-    // Stealer loglarına özgü ek sistem/cihaz bilgisi (hostname, malware yolu).
+    // NOT: hostname আৰু malware_path artık backend'den DÜZ alanlar olarak
+    // geliyor (bkz. models.py -> BreachLog.hostname / .malware_path).
+    // system_info hiçbir zaman backend'den bu iç içe (nested) şekilde
+    // gelmediği için PasswordCell.tsx'teki modal her zaman "-" gösteriyordu.
+    hostname?: string;
+    malware_path?: string;
+    // Geriye dönük uyumluluk için opsiyonel bırakıldı (kullanılmıyor).
     system_info?: SystemInfo;
     // Sistem tarafından yapılan en güncel taramanın zaman damgası. Backend
     // bu alanı henüz ayrı döndürmüyorsa modal `last_seen` alanına düşer

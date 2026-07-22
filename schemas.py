@@ -1,13 +1,11 @@
 """
-Tüm servislerin (XposedOrNot, LeakIX, AlienVault OTX) ortak çıktı formatı.
+Tüm servislerin (XposedOrNot, LeakIX, AlienVault OTX, BreachDirectory) ortak çıktı formatı.
 
 Her servis kendi ham API yanıtını bu şemaya normalize eder, böylece main.py
 kaynaktan bağımsız şekilde tek bir listeyi veritabanına yazabilir.
 """
-
 from datetime import datetime, timezone
 from typing import List, Literal, Optional
-
 from pydantic import BaseModel, Field, field_validator
 
 Priority = Literal["Info", "Low", "Medium", "High", "Critical"]
@@ -20,7 +18,7 @@ class NormalizedLeak(BaseModel):
     email_leak: str = Field(default="", description="İlişkili e-posta (varsa)")
     leaked_password: str = Field(default="******", description="Maskeli şifre / hassas alan")
     leak_type: str = Field(..., description="Örn: Botnet, Open Service, IOC, Combolist")
-    market: str = Field(..., description="Kaynak servis: XposedOrNot, LeakIX, AlienVault OTX")
+    market: str = Field(..., description="Kaynak servis: XposedOrNot, LeakIX, AlienVault OTX, BreachDirectory")
     last_seen: str = Field(..., description="YYYY-MM-DD formatında en son görülme tarihi")
     certainty: Certainty = "Unsure"
     status: Status = "Active"
@@ -32,14 +30,23 @@ class NormalizedLeak(BaseModel):
         default=None, description="Debug amaçlı: orijinal servis adı / referans id"
     )
 
+    # --- SOC / Stealer Log Detay Alanları ---
+    url: Optional[str] = Field(
+        default="", description="Sızıntının/login panelinin tam adresi (varsa)"
+    )
+    ip_info: Optional[str] = Field(
+        default="", description="Stealer log / açık servis taramasından gelen IP adresi"
+    )
+    hostname: Optional[str] = Field(
+        default="", description="Enfekte cihazın hostname bilgisi (stealer log)"
+    )
+    malware_path: Optional[str] = Field(
+        default="", description="Zararlı yazılımın diskteki dosya yolu (stealer log)"
+    )
+
 
 # --------------------------------------------------------------------- #
 # İzlenen Varlıklar (Monitored Assets) modülü şemaları
-#
-# NOT: Buradaki AssetBreachLogOut, ad-hoc arama şeması olan NormalizedLeak
-# ile KARIŞTIRILMAMALIDIR. NormalizedLeak / BreachLog anlık tarama
-# sonuçlarını, AssetBreachLog ise izlenen bir varlığa bağlı KALICI sızıntı
-# geçmişini temsil eder (bkz. models.py).
 # --------------------------------------------------------------------- #
 
 AssetType = Literal["email", "domain"]
@@ -58,10 +65,30 @@ class MonitoredAssetCreate(BaseModel):
 
 
 class AssetBreachLogOut(BaseModel):
+    """
+    İzlenen bir varlığa ait kalıcı sızıntı geçmişi.
+    Ad-hoc BreachLog / NormalizedLeak alanları ile birebir uyumlu hale getirilmiştir.
+    """
     id: int
-    breach_name: str
-    breach_date: Optional[str] = None
-    exposed_data_types: str = ""
+    asset_id: int
+    asset: str
+    email_leak: Optional[str] = ""
+    leaked_password: Optional[str] = "******"
+    leak_type: str
+    market: str
+    last_seen: Optional[str] = "-"
+    certainty: Optional[str] = "Unsure"
+    status: Optional[str] = "Active"
+    priority: Optional[str] = "Info"
+    discovery_date: str
+    raw_source: Optional[str] = ""
+
+    # --- SOC / Stealer Log Detay Alanları ---
+    url: Optional[str] = ""
+    ip_info: Optional[str] = ""
+    hostname: Optional[str] = ""
+    malware_path: Optional[str] = ""
+
     created_at: datetime
 
     class Config:

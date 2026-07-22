@@ -120,11 +120,18 @@ export default function Home() {
             setInfoMessage(`"${currentTarget}" izleme listesine eklendi. Sızıntılar taranıyor...`);
 
             // 2. Anında ilk taramasını başlat ki sızıntı sayısı 0 kalmasın
-            await rescanMonitoredAsset(newAsset.id);
+            const updated = await rescanMonitoredAsset(newAsset.id);
 
             if (showMonitored) {
                 await loadMonitoredAssets();
+            } else {
+                setMonitoredAssets((prev) => [...prev, updated]);
             }
+
+            if (updated.breach_logs) {
+                setLeaks(updated.breach_logs);
+            }
+
             setInfoMessage(`"${currentTarget}" izlemeye eklendi ve sızıntı geçmişi güncellendi.`);
         } catch (err) {
             setError(
@@ -175,6 +182,10 @@ export default function Home() {
         try {
             const updated = await rescanMonitoredAsset(id);
             setMonitoredAssets((prev) => prev.map((a) => (a.id === id ? updated : a)));
+
+            if (updated.breach_logs) {
+                setLeaks(updated.breach_logs);
+            }
         } catch (err) {
             setMonitoredError(
                 err instanceof Error ? err.message : "Yeniden tarama sırasında hata oluştu."
@@ -197,7 +208,7 @@ export default function Home() {
             );
             setInfoMessage(
                 result.detail ||
-                    `"${result.target ?? ""}" domaini başarıyla doğrulandı.`
+                `"${result.target ?? ""}" domaini başarıyla doğrulandı.`
             );
         } catch (err) {
             setMonitoredError(

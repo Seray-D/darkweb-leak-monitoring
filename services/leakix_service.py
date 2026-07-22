@@ -22,9 +22,7 @@ Docs: https://leakix.net/api-documentation
 
 import logging
 from typing import List, Optional
-
 import httpx
-
 from config import settings
 from schemas import NormalizedLeak
 
@@ -43,7 +41,7 @@ def _priority_from_severity(severity: float | int | None) -> str:
     """LeakIX 'severity' skorunu (0-10 aralığı) proje önceliğine eşler."""
     if severity is None:
         return "Info"
-    if severity >= 8: # veya int(severity or 0) >= 8
+    if severity >= 8:
         return "Critical"
     if severity >= 6:
         return "High"
@@ -157,6 +155,13 @@ def _normalize_entry(entry: dict, query: str) -> NormalizedLeak:
 
     leak_type = _build_technical_leak_type(entry, leak_info, service_info)
 
+    # Teknik detay alanlarının eşlenmesi
+    ip_address = entry.get("ip")
+    host_name = entry.get("host")
+    port = entry.get("port")
+    
+    generated_url = f"https://{host_name}:{port}" if host_name and port else (f"http://{ip_address}:{port}" if ip_address and port else None)
+
     return NormalizedLeak(
         asset=asset,
         email_leak="",
@@ -168,6 +173,10 @@ def _normalize_entry(entry: dict, query: str) -> NormalizedLeak:
         status="Active",
         priority=_priority_from_severity(severity),
         raw_source=entry.get("id") or entry.get("_id"),
+        ip_info=ip_address,
+        hostname=host_name,
+        url=generated_url,
+        malware_path=None
     )
 
 

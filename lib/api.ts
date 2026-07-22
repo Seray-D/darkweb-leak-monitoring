@@ -17,22 +17,16 @@ function normalizeLeakArray(data: any): Leak[] {
  */
 export async function scanEmail(emailOrDomain: string): Promise<Leak[]> {
     const query = encodeURIComponent(emailOrDomain.trim());
-    const isEmail = emailOrDomain.includes("@");
 
-    // Eğer e-posta girildiyse öncelikle /scan veya /search endpoint'lerini kullan
-    const primaryUrl = isEmail
-        ? `${API_BASE}/api/v1/scan?email=${query}`
-        : `${API_BASE}/api/v1/leaks/search-domain?domain=${query}`;
-
-    const fallbackUrl = isEmail
-        ? `${API_BASE}/api/v1/leaks/search-domain?domain=${query}`
-        : `${API_BASE}/api/v1/scan?email=${query}`;
+    // Artık backend /api/v1/scan?target=... parametresini kullanıyor
+    const primaryUrl = `${API_BASE}/api/v1/scan?target=${query}`;
+    const fallbackUrl = `${API_BASE}/api/v1/leaks/search-domain?domain=${query}`;
 
     try {
         let res = await fetch(primaryUrl, { cache: "no-store" });
 
         if (res.status === 404 || !res.ok) {
-            // Yedek uç noktayı dene
+            // Yedek uç noktayı dene (Mevcut veritabanı araması)
             res = await fetch(fallbackUrl, { cache: "no-store" });
         }
 
