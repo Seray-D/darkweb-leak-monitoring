@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { AlertTriangle, CheckCircle2, X, RefreshCw, ShieldPlus, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, X, RefreshCw, ShieldPlus, ShieldCheck, Trash2, Copy } from "lucide-react";
 import Header from "@/components/Header";
 import LeakTable from "@/components/LeakTable";
 import StatsCards from "@/components/StatsCards";
-import { scanEmail, addMonitoredAsset, getMonitoredAssets, deleteMonitoredAsset, rescanMonitoredAsset } from "@/lib/api";
+import { scanEmail, addMonitoredAsset, getMonitoredAssets, deleteMonitoredAsset, rescanMonitoredAsset, verifyMonitoredAsset } from "@/lib/api";
 import { Leak, MonitoredAsset } from "@/lib/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -38,6 +38,10 @@ export default function Home() {
 
     // Yeniden tarama durumu
     const [rescanningId, setRescanningId] = useState<number | null>(null);
+
+    // Domain Sahiplik Doğrulaması (DNS TXT Verification) durumu
+    const [verifyingId, setVerifyingId] = useState<number | null>(null);
+    const [copiedAssetId, setCopiedAssetId] = useState<number | null>(null);
 
     const didClearOnMount = useRef(false);
 
@@ -180,6 +184,41 @@ export default function Home() {
         }
     };
 
+    // "Doğrula" butonu: DNS TXT kaydını backend'e doğrulatır.
+    const handleVerifyMonitored = async (id: number) => {
+        setVerifyingId(id);
+        setMonitoredError(null);
+        try {
+            const result = await verifyMonitoredAsset(id);
+            setMonitoredAssets((prev) =>
+                prev.map((asset) =>
+                    asset.id === id ? { ...asset, is_verified: true } : asset
+                )
+            );
+            setInfoMessage(
+                result.detail ||
+                    `"${result.target ?? ""}" domaini başarıyla doğrulandı.`
+            );
+        } catch (err) {
+            setMonitoredError(
+                err instanceof Error ? err.message : "Domain doğrulanırken hata oluştu."
+            );
+        } finally {
+            setVerifyingId(null);
+        }
+    };
+
+    // TXT kaydı metnini panoya kopyalar ve kısa süreliğine geri bildirim gösterir.
+    const handleCopyToken = async (assetId: number, token: string) => {
+        try {
+            await navigator.clipboard.writeText(`leak-monitor-verify=${token}`);
+            setCopiedAssetId(assetId);
+            setTimeout(() => setCopiedAssetId((prev) => (prev === assetId ? null : prev)), 2000);
+        } catch (err) {
+            setMonitoredError("Panoya kopyalanamadı, lütfen manuel seçip kopyalayın.");
+        }
+    };
+
     return (
         <main className="min-h-screen bg-[#0a0d14] text-slate-100">
             <Header
@@ -233,44 +272,78 @@ export default function Home() {
                             </p>
                         ) : (
                             <ul className="divide-y divide-slate-800">
-                                {monitoredAssets.map((asset) => (
-                                    <li
-                                        key={asset.id}
-                                        className="flex items-center justify-between py-2.5"
-                                    >
-                                        <div>
-                                            <p className="text-sm text-slate-100">
-                                                {asset.target}
-                                            </p>
-                                            <p className="text-xs text-slate-500">
-                                                {asset.asset_type === "email" ? "E-posta" : "Domain"}
-                                                {" · "}
-                                                {asset.breach_logs.length} sızıntı kaydı
-                                                {" · "}
-                                                {asset.is_verified ? "Doğrulandı" : "Doğrulanmadı"}
-                                            </p>
-                                        </div>
-                                        <div className="flex items-center gap-3">
-                                            <button
-                                                onClick={() => handleRescanMonitored(asset.id)}
-                                                disabled={rescanningId === asset.id}
-                                                aria-label={`${asset.target} için şimdi tara`}
-                                                className="flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                                            >
-                                                <RefreshCw size={13} className={rescanningId === asset.id ? "animate-spin" : ""} />
-                                                {rescanningId === asset.id ? "Taranıyor..." : "Şimdi Tara"}
-                                            </button>
-                                            <button
-                                                onClick={() => handleRemoveMonitored(asset.id)}
-                                                aria-label={`${asset.target} izlemeden kaldır`}
-                                                className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300"
-                                            >
-                                                <Trash2 size={13} />
-                                                Kaldır
-                                            </button>
-                                        </div>
-                                    </li>
-                                ))}
+                                {monitoredAssets.map((asset) => {
+                                    const needsVerification =
+                                        asset.asset_type === "domain" && !asset.is_verified;
+
+                                    return (
+                                        <li key={asset.id} className="py-2.5 space-y-2">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <div>
+                                                    <p className="text-sm text-slate-100">
+                                                        {asset.target}
+                                                    </p>
+                                                    <p className="text-xs text-slate-500">
+                                                        {asset.asset_type === "email" ? "E-posta" : "Domain"}
+                                                        {" · "}
+                                                        {asset.breach_logs.length} sızıntı kaydı
+                                                        {" · "}
+                                                        {asset.is_verified ? "Doğrulandı" : "Doğrulanmadı"}
+                                                    </p>
+                                                </div>
+                                                <div className="flex items-center gap-3">
+                                                    {needsVerification && (
+                                                        <button
+                                                            onClick={() => handleVerifyMonitored(asset.id)}
+                                                            disabled={verifyingId === asset.id}
+                                                            aria-label={`${asset.target} domainini doğrula`}
+                                                            className="flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                        >
+                                                            <ShieldCheck
+                                                                size={13}
+                                                                className={verifyingId === asset.id ? "animate-spin" : ""}
+                                                            />
+                                                            {verifyingId === asset.id ? "Doğrulanıyor..." : "Doğrula"}
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        onClick={() => handleRescanMonitored(asset.id)}
+                                                        disabled={rescanningId === asset.id}
+                                                        aria-label={`${asset.target} için şimdi tara`}
+                                                        className="flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                    >
+                                                        <RefreshCw size={13} className={rescanningId === asset.id ? "animate-spin" : ""} />
+                                                        {rescanningId === asset.id ? "Taranıyor..." : "Şimdi Tara"}
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleRemoveMonitored(asset.id)}
+                                                        aria-label={`${asset.target} izlemeden kaldır`}
+                                                        className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300"
+                                                    >
+                                                        <Trash2 size={13} />
+                                                        Kaldır
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            {needsVerification && (
+                                                <div className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+                                                    <code className="flex-1 min-w-0 truncate text-xs text-amber-300">
+                                                        DNS TXT Kaydı: leak-monitor-verify={asset.verification_token}
+                                                    </code>
+                                                    <button
+                                                        onClick={() => handleCopyToken(asset.id, asset.verification_token)}
+                                                        aria-label={`${asset.target} için TXT kaydını kopyala`}
+                                                        className="flex shrink-0 items-center gap-1 text-xs text-amber-300 hover:text-amber-200"
+                                                    >
+                                                        <Copy size={12} />
+                                                        {copiedAssetId === asset.id ? "Kopyalandı" : "Kopyala"}
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </li>
+                                    );
+                                })}
                             </ul>
                         )}
                     </div>

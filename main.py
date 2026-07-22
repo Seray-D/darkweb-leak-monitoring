@@ -38,12 +38,14 @@ from models import AssetBreachLog, BreachLog, MonitoredAsset
 from schemas import MonitoredAssetCreate, MonitoredAssetOut, NormalizedLeak
 from services import (
     breachdirectory_service,
+    dns_service,
     leakix_service,
     notification_service,
     otx_service,
     xposed_service,
 )
 from services.xposed_adapter import normalize_xposed_results
+from services.otx_service import search_otx
 
 load_dotenv()
 
@@ -82,6 +84,57 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/api/v1/test-otx/{domain}")
+async def test_otx_endpoint(domain: str):
+    """AlienVault OTX servisini test etmek için geçici endpoint."""
+    results = await search_otx(domain)
+    return {
+        "service": "AlienVault OTX",
+        "domain": domain,
+        "total_pulses_found": len(results),
+        "results": results
+    }
+
+
+@app.get("/api/v1/test-leakix/{domain}")
+async def test_leakix_endpoint(domain: str):
+    """LeakIX servisini test etmek için geçici endpoint."""
+    results = await leakix_service.search_leakix(domain)
+    return {
+        "service": "LeakIX",
+        "domain": domain,
+        "count": len(results),
+        "results": results
+    }
+
+
+@app.get("/api/v1/test-xposed/{email}")
+async def test_xposed_endpoint(email: str):
+    """XposedOrNot servisini test etmek için geçici endpoint."""
+    raw_data = await xposed_service.check_email(email)
+    normalized = normalize_xposed_results(raw_data, email)
+    return {
+        "service": "XposedOrNot",
+        "email": email,
+        "raw_response": raw_data,
+        "normalized_count": len(normalized),
+        "results": normalized
+    }
+
+
+@app.get("/api/v1/test-breachdirectory/{email}")
+async def test_breachdirectory_endpoint(email: str):
+    """BreachDirectory servisini test etmek için geçici endpoint."""
+    results = await breachdirectory_service.search_breachdirectory(email)
+    return {
+        "service": "BreachDirectory",
+        "email": email,
+        "count": len(results),
+        "results": results
+    }
+
 
 # Dedup anahtarı: (asset, email_leak, leak_type, raw_source)
 DedupKey = Tuple[str, str, str, str]
@@ -269,6 +322,71 @@ def delete_monitored_asset(asset_id: int, db: Session = Depends(get_db)):
 
     logger.info("İzlemeden kaldırıldı: id=%s, target='%s'", asset_id, asset.target)
     return {"detail": "İzleme listesinden kaldırıldı.", "id": asset_id}
+
+
+@app.post("/api/v1/assets/{asset_id}/verify")
+async def verify_monitored_asset(asset_id: int, db: Session = Depends(get_db)):
+    """
+    Domain Sahiplik Doğrulaması (DNS TXT Verification).
+
+    İzlenen bir 'domain' tipi varlığın gerçek sahibi olunduğunu, domain'in
+    DNS TXT kayıtlarına `leak-monitor-verify=<verification_token>` eklenip
+    eklenmediğini kontrol ederek doğrular.
+    """
+    asset = db.query(MonitoredAsset).filter(MonitoredAsset.id == asset_id).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="İzlenen varlık bulunamadı.")
+
+    if asset.asset_type != "domain":
+        raise HTTPException(
+            status_code=400,
+            detail="Sadece 'domain' tipi varlıklar DNS TXT ile doğrulanabilir.",
+        )
+
+    if asset.is_verified:
+        return {
+            "detail": "Bu varlık zaten doğrulanmış.",
+            "id": asset.id,
+            "target": asset.target,
+            "is_verified": True,
+        }
+
+    is_valid = await dns_service.verify_domain_txt(
+        asset.target, asset.verification_token
+    )
+
+    if not is_valid:
+        logger.warning(
+            "[Domain Verify] Doğrulama başarısız: id=%s, target='%s'",
+            asset.id,
+            asset.target,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'{asset.target}' domaininin DNS ayarlarında beklenen TXT kaydı "
+                f"bulunamadı veya eşleşmedi. Lütfen şu TXT kaydını ekleyip DNS "
+                f"yayılımını bekledikten sonra tekrar deneyin: "
+                f"leak-monitor-verify={asset.verification_token}"
+            ),
+        )
+
+    asset.is_verified = True
+    db.commit()
+    db.refresh(asset)
+
+    logger.info(
+        "[Domain Verify] Doğrulama başarılı: id=%s, target='%s'",
+        asset.id,
+        asset.target,
+    )
+
+    return {
+        "detail": "Domain başarıyla doğrulandı.",
+        "id": asset.id,
+        "target": asset.target,
+        "is_verified": True,
+    }
 
 
 @app.get("/api/v1/check-password")

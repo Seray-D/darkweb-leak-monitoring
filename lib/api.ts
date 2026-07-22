@@ -181,3 +181,31 @@ export async function rescanMonitoredAsset(id: number): Promise<MonitoredAsset> 
 
     return res.json();
 }
+
+/**
+ * Domain Sahiplik Doğrulaması (DNS TXT Verification).
+ *
+ * `asset_type === "domain"` olan bir varlığın DNS TXT kayıtlarında
+ * `leak-monitor-verify=<verification_token>` değerinin yayınlanıp
+ * yayınlanmadığını backend üzerinden kontrol ettirir. Eşleşme bulunursa
+ * varlık `is_verified = true` olarak işaretlenir.
+ *
+ * Backend hata durumunda (404 / 400) `{ detail: string }` gövdesi döner;
+ * bu mesaj olduğu gibi Error içine taşınır ki UI kullanıcıya gösterebilsin.
+ */
+export async function verifyMonitoredAsset(
+    id: number
+): Promise<{ detail: string; id: number; target: string; is_verified: boolean }> {
+    const res = await fetch(`${API_BASE}/api/v1/assets/${id}/verify`, {
+        method: "POST",
+        cache: "no-store",
+    });
+
+    const data = await res.json().catch(() => null);
+
+    if (!res.ok) {
+        throw new Error(data?.detail || `Domain doğrulanırken hata oluştu (${res.status})`);
+    }
+
+    return data;
+}

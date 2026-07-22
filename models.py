@@ -4,10 +4,17 @@ ATLAYIN — sadece alan adlarının aşağıdakiyle eşleştiğinden emin olun, 
 main.py bu alan adlarını kullanarak kayıt oluşturuyor.
 """
 
+import uuid
+
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.orm import relationship
 
 from database import Base
+
+
+def _generate_verification_token() -> str:
+    """Domain Sahiplik Doğrulaması (DNS TXT) için 16 karakterlik rastgele token üretir."""
+    return uuid.uuid4().hex[:16]
 
 
 class BreachLog(Base):
@@ -47,6 +54,16 @@ class MonitoredAsset(Base):
     target = Column(String, nullable=False, unique=True, index=True)
     asset_type = Column(String, nullable=False)  # 'email' | 'domain'
     is_verified = Column(Boolean, default=False, nullable=False)
+    # Domain Sahiplik Doğrulaması (DNS TXT) için: DNS'e "leak-monitor-verify=<token>"
+    # şeklinde eklenmesi beklenen tek kullanımlık doğrulama kodu.
+    # NOT: Mevcut (önceden oluşturulmuş) veritabanlarında bu kolon otomatik
+    # eklenmez (create_all sadece eksik TABLOLARI oluşturur, mevcut tabloya
+    # kolon eklemez). Var olan kurulumlarda manuel migration
+    # (ör. `ALTER TABLE monitored_assets ADD COLUMN verification_token ...`)
+    # gerekir.
+    verification_token = Column(
+        String, nullable=False, unique=True, default=_generate_verification_token
+    )
     created_at = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

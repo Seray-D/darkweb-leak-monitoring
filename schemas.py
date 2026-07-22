@@ -73,6 +73,9 @@ class MonitoredAssetOut(BaseModel):
     target: str
     asset_type: AssetType
     is_verified: bool
+    # Frontend'in kullanıcıya "DNS'inize şu TXT kaydını ekleyin" diye
+    # gösterebilmesi için doğrulama tokenı.
+    verification_token: str
     created_at: datetime
     breach_logs: List[AssetBreachLogOut] = Field(default_factory=list)
 

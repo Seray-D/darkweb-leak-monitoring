@@ -104,6 +104,11 @@ export interface MonitoredAsset {
     target: string;
     asset_type: AssetType;
     is_verified: boolean;
+    // Domain Sahiplik Doğrulaması (DNS TXT Verification) için: DNS'e
+    // "leak-monitor-verify=<token>" olarak eklenmesi beklenen kod.
+    // Sadece asset_type === "domain" && is_verified === false iken
+    // UI'da gösterilir (bkz. app/page.tsx).
+    verification_token: string;
     created_at: string;
     breach_logs: AssetBreachLog[];
 }
