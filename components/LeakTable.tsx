@@ -58,7 +58,6 @@ function splitLeakType(leakType: string): { title: string; subtitle: string | nu
 }
 
 function buildInvestigationLink(leak: Leak): string {
-    // Null/Undefined koruması eklendi
     const raw = String(leak.raw_source || leak.asset || "").trim();
 
     if (!raw) return "#";
@@ -225,7 +224,7 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
                         </p>
                         <p className="text-xs text-slate-600">
                             Yukarıdaki arama çubuğuna bir domain (örn:{" "}
-                            <code className="text-cyan-500">izmir.bel.tr</code>) veya e-posta girerek tarama başlatabilirsiniz.
+                            <code className="text-cyan-500">example.com</code>) veya e-posta girerek tarama başlatabilirsiniz.
                         </p>
                     </div>
                 </div>

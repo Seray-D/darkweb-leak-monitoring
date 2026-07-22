@@ -12,6 +12,9 @@ import {
     Bug,
     KeyRound,
     ShieldAlert,
+    ShieldCheck,
+    ShieldQuestion,
+    Loader2,
     ListChecks,
     Fingerprint,
     Server,
@@ -25,7 +28,8 @@ import {
     ChevronDown,
     ExternalLink,
 } from "lucide-react";
-import type { Leak, LeakComment, PasswordExposureCategory } from "@/lib/types";
+import type { Leak, LeakComment, PasswordExposureCategory, PwnedPasswordResult } from "@/lib/types";
+import { checkPassword } from "@/lib/api";
 
 interface PasswordCellProps {
     leak: Leak;
@@ -192,6 +196,154 @@ export function buildInvestigationLink(leak: Leak): string {
         default:
             return `https://www.google.com/search?q=${query}`;
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* 3.5) HIBP "Pwned Passwords" — Hash Bazlı Parola Sızıntı Kontrolü      */
+/*      (k-Anonymity model, bkz. lib/api.ts -> checkPassword)           */
+/* ------------------------------------------------------------------ */
+
+type PwnedCheckState =
+    | { status: "idle" }
+    | { status: "loading" }
+    | { status: "success"; result: PwnedPasswordResult }
+    | { status: "error"; message: string };
+
+function PwnedInlineResult({ state }: { state: PwnedCheckState }) {
+    if (state.status === "success") {
+        return state.result.pwned ? (
+            <div className="flex items-center gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-400">
+                <ShieldAlert size={14} className="shrink-0" />
+                <span>
+                    {state.result.count.toLocaleString("tr-TR")} kez sızdırılmış! Derhal değiştirin!
+                </span>
+            </div>
+        ) : (
+            <div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-400">
+                <ShieldCheck size={14} className="shrink-0" />
+                <span>Güvenli / Sızıntıda Bulunamadı</span>
+            </div>
+        );
+    }
+    if (state.status === "error") {
+        return (
+            <div className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-400">
+                <ShieldAlert size={14} className="shrink-0" />
+                <span>{state.message}</span>
+            </div>
+        );
+    }
+    return null;
+}
+
+function HibpCheckButton({
+    label,
+    loadingLabel,
+    onClick,
+    disabled,
+    loading,
+}: {
+    label: string;
+    loadingLabel: string;
+    onClick: () => void;
+    disabled: boolean;
+    loading: boolean;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            disabled={disabled}
+            className="flex w-full items-center justify-center gap-2 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-medium text-cyan-400 transition-colors hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+            {loading ? (
+                <>
+                    <Loader2 size={13} className="shrink-0 animate-spin" />
+                    {loadingLabel}
+                </>
+            ) : (
+                <>
+                    <ShieldQuestion size={13} className="shrink-0" />
+                    {label}
+                </>
+            )}
+        </button>
+    );
+}
+
+/**
+ * Karanlık tema uyumlu, iki alt bölümden oluşan HIBP kontrol paneli:
+ *   1) (varsa) sızıntıdaki düz metin parolayı tek tıkla test etme,
+ *   2) kullanıcının kendi belirlediği herhangi bir parolayı test etme.
+ * Her iki durumda da parola SADECE tarayıcıda hash'lenir; bkz. lib/api.ts.
+ */
+function HibpPasswordCheckSection({
+    leakPassword,
+    canCheckLeakPassword,
+}: {
+    leakPassword?: string;
+    canCheckLeakPassword: boolean;
+}) {
+    const [customPassword, setCustomPassword] = useState("");
+    const [leakCheck, setLeakCheck] = useState<PwnedCheckState>({ status: "idle" });
+    const [customCheck, setCustomCheck] = useState<PwnedCheckState>({ status: "idle" });
+
+    const runCheck = async (value: string, setState: (s: PwnedCheckState) => void) => {
+        const trimmed = value.trim();
+        if (!trimmed) return;
+        setState({ status: "loading" });
+        try {
+            const result = await checkPassword(trimmed);
+            setState({ status: "success", result });
+        } catch (err) {
+            setState({
+                status: "error",
+                message: err instanceof Error ? err.message : "Parola kontrolü başarısız oldu.",
+            });
+        }
+    };
+
+    return (
+        <div className="rounded-md border border-emerald-900/40 bg-emerald-950/10 px-4 py-3">
+            <SectionLabel icon={<ShieldCheck size={13} />} text="Parola Sızıntı Kontrolü (HIBP)" tone="emerald" />
+            <p className="mt-1.5 text-[10px] leading-relaxed text-slate-500">
+                k-Anonymity modeli: parola yalnızca tarayıcınızda SHA-1 ile hash&#39;lenir,
+                sunucuya hash&#39;in yalnızca ilk 5 karakteri gönderilir. Parolanın kendisi
+                asla ağa çıkmaz.
+            </p>
+
+            {canCheckLeakPassword && (
+                <div className="mt-3 space-y-2 border-b border-slate-800/70 pb-3">
+                    <HibpCheckButton
+                        label="Bu Sızıntıdaki Parolayı Kontrol Et"
+                        loadingLabel="Kontrol ediliyor..."
+                        onClick={() => runCheck(leakPassword ?? "", setLeakCheck)}
+                        disabled={leakCheck.status === "loading"}
+                        loading={leakCheck.status === "loading"}
+                    />
+                    <PwnedInlineResult state={leakCheck} />
+                </div>
+            )}
+
+            <div className="mt-3 space-y-2">
+                <input
+                    type="password"
+                    value={customPassword}
+                    onChange={(e) => setCustomPassword(e.target.value)}
+                    placeholder="Kendi parolanızı test edin..."
+                    className="w-full rounded-md border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:border-emerald-500/50 focus:outline-none"
+                />
+                <HibpCheckButton
+                    label="Pwned Passwords'te Kontrol Et"
+                    loadingLabel="Kontrol ediliyor..."
+                    onClick={() => runCheck(customPassword, setCustomCheck)}
+                    disabled={customCheck.status === "loading" || !customPassword.trim()}
+                    loading={customCheck.status === "loading"}
+                />
+                <PwnedInlineResult state={customCheck} />
+            </div>
+        </div>
+    );
 }
 
 /* ------------------------------------------------------------------ */
@@ -426,6 +578,12 @@ export function SocLeakDetailModal({
                                     </div>
                                 </div>
                             </div>
+
+                            {/* HIBP Pwned Passwords Kontrolü */}
+                            <HibpPasswordCheckSection
+                                leakPassword={leak.leaked_password}
+                                canCheckLeakPassword={formatInfo.kind === "plaintext"}
+                            />
 
                             {/* Discovery Date / Last Check */}
                             <div className="grid grid-cols-2 gap-3">

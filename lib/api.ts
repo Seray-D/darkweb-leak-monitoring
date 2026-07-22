@@ -1,4 +1,4 @@
-import { Leak } from "./types";
+import { HibpRangeResponse, Leak, PwnedPasswordResult } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -46,6 +46,57 @@ export async function scanEmail(emailOrDomain: string): Promise<Leak[]> {
         console.error("scanEmail Hatası:", error);
         throw error;
     }
+}
+
+/**
+ * Verilen metnin (parolanın) SHA-1 hash'ini tarayıcıda (Web Crypto API ile)
+ * hesaplar. Parola hiçbir zaman ağa gönderilmez; yalnızca bu hash'in ilk 5
+ * karakteri (prefix) HIBP k-Anonymity sorgusu için kullanılır.
+ */
+async function sha1Hex(plainText: string): Promise<string> {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(plainText);
+    const digest = await crypto.subtle.digest("SHA-1", data);
+    return Array.from(new Uint8Array(digest))
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("")
+        .toUpperCase();
+}
+
+/**
+ * HIBP "Pwned Passwords" — Hash Bazlı Parola Sızıntı Kontrolü (k-Anonymity).
+ *
+ * Parola ASLA açık metin olarak hiçbir yere (backend'e dahi) gönderilmez:
+ *   1) Parolanın SHA-1 hash'i bu fonksiyon içinde, tarayıcıda hesaplanır.
+ *   2) Hash'in yalnızca ilk 5 karakteri (prefix) backend'e gönderilir.
+ *   3) Backend (/api/v1/check-password) bu prefix'i HIBP'ye iletir ve o
+ *      prefix'e uyan tüm suffix:count çiftlerini döner (CORS'suz, sunucu
+ *      taraflı proxy).
+ *   4) Kalan 35 karakter (suffix), yalnızca bu fonksiyonda, dönen listede
+ *      aranır — asıl eşleştirme tamamen istemci tarafında yapılır.
+ */
+export async function checkPassword(password: string): Promise<PwnedPasswordResult> {
+    const plainText = password ?? "";
+    if (!plainText) {
+        return { pwned: false, count: 0 };
+    }
+
+    const fullHash = await sha1Hex(plainText);
+    const prefix = fullHash.slice(0, 5);
+    const suffix = fullHash.slice(5);
+
+    const res = await fetch(`${API_BASE}/api/v1/check-password?prefix=${prefix}`, {
+        cache: "no-store",
+    });
+
+    if (!res.ok) {
+        throw new Error(`Parola kontrolü başarısız oldu (${res.status})`);
+    }
+
+    const data: HibpRangeResponse = await res.json();
+    const match = (data.hashes ?? []).find((entry) => entry.suffix?.toUpperCase() === suffix);
+
+    return match ? { pwned: true, count: match.count } : { pwned: false, count: 0 };
 }
 
 export async function clearLeaks(): Promise<void> {

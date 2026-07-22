@@ -23,6 +23,7 @@ import logging
 import os
 import re
 from typing import List, Tuple
+import httpx
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -82,6 +83,12 @@ app.add_middleware(
 
 # Dedup anahtarı: (asset, email_leak, leak_type, raw_source)
 DedupKey = Tuple[str, str, str, str]
+
+# HIBP Pwned Passwords k-Anonymity endpoint'i. Sadece SHA-1 hash'in ilk 5
+# karakteri (prefix) buraya gönderilir; asıl parola veya tam hash ASLA
+# backend'e/HIBP'ye ulaşmaz (bkz. /api/v1/check-password).
+HIBP_RANGE_URL = "https://api.pwnedpasswords.com/range/{prefix}"
+SHA1_PREFIX_RE = re.compile(r"^[A-Fa-f0-9]{5}$")
 
 
 def _dedup_key(asset: str, email_leak: str, leak_type: str, raw_source) -> DedupKey:
@@ -184,6 +191,69 @@ def clear_leaks(db: Session = Depends(get_db)):
     deleted_count = _clear_all_leaks(db)
     logger.info("Veritabanı temizlendi, silinen kayıt sayısı: %s", deleted_count)
     return {"detail": "Veritabanı temizlendi.", "deleted_count": deleted_count}
+
+
+@app.get("/api/v1/check-password")
+async def check_password(prefix: str):
+    """
+    HIBP "Pwned Passwords" k-Anonymity modeli — hash bazlı parola sızıntı
+    kontrolü.
+
+    Bu endpoint parolanın kendisini veya tam SHA-1 hash'ini ASLA görmez:
+      - İstemci (tarayıcı) parolanın SHA-1 hash'ini yerel olarak hesaplar,
+      - Hash'in yalnızca İLK 5 karakteri (prefix) bu endpoint'e gönderilir,
+      - Biz bu prefix'i HIBP'nin /range/{prefix} uç noktasına iletiriz
+        (CORS sorunlarını önlemek için backend üzerinden),
+      - HIBP o prefix'e uyan TÜM suffix:count çiftlerini (binlerce satır)
+        döner; gerçek eşleşme (suffix karşılaştırması) istemci tarafında
+        yapılır, çünkü tam hash'i (dolayısıyla suffix'i) yalnızca istemci
+        bilir.
+
+    Böylece parola veya tam hash hiçbir zaman ağda tek başına, geri
+    dönüştürülebilir şekilde dolaşmaz.
+    """
+    cleaned_prefix = (prefix or "").strip().upper()
+    if not SHA1_PREFIX_RE.match(cleaned_prefix):
+        raise HTTPException(
+            status_code=400,
+            detail="Geçersiz prefix: SHA-1 hash'inin ilk 5 hex karakteri olmalı.",
+        )
+
+    url = HIBP_RANGE_URL.format(prefix=cleaned_prefix)
+    # "Add-Padding" HIBP'nin resmi anti-timing-analysis header'ıdır; yanıta
+    # rastgele sahte (count=0) satırlar ekletir, gerçek eşleşmeleri etkilemez.
+    headers = {"Add-Padding": "true"}
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers)
+    except httpx.HTTPError as exc:
+        logger.error("HIBP Pwned Passwords sorgusu başarısız oldu: %s", exc)
+        raise HTTPException(
+            status_code=502, detail="HIBP Pwned Passwords servisine ulaşılamadı."
+        ) from exc
+
+    if resp.status_code != 200:
+        logger.warning(
+            "HIBP Pwned Passwords beklenmeyen durum kodu döndürdü: %s", resp.status_code
+        )
+        raise HTTPException(
+            status_code=502, detail=f"HIBP servisi hata döndü ({resp.status_code})."
+        )
+
+    hashes = []
+    for line in resp.text.splitlines():
+        line = line.strip()
+        if not line or ":" not in line:
+            continue
+        suffix, _, count_str = line.partition(":")
+        try:
+            count = int(count_str.strip())
+        except ValueError:
+            continue
+        hashes.append({"suffix": suffix.strip().upper(), "count": count})
+
+    return {"prefix": cleaned_prefix, "hashes": hashes}
 
 
 @app.get("/api/v1/scan")

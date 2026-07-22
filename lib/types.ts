@@ -60,3 +60,23 @@ export type BadgeVariant = "certainty" | "status" | "priority";
 // Diğer bileşenler (örn. gelecekteki raporlama modülü) ihtiyaç duyarsa diye
 // burada da export ediliyor.
 export type PasswordExposureCategory = "corporate" | "third_party" | "stealer";
+
+/* ------------------------------------------------------------------ */
+/* HIBP "Pwned Passwords" (k-Anonymity) — Hash Bazlı Parola Sızıntı     */
+/* Kontrolü modülü için tipler. Bkz. lib/api.ts -> checkPassword()      */
+/* ve PasswordCell.tsx -> PwnedPasswordChecker.                        */
+/* ------------------------------------------------------------------ */
+
+// Backend'in /api/v1/check-password endpoint'inden dönen ham yanıt.
+// (prefix'e uyan tüm suffix:count çiftleri; asıl eşleşme istemcide yapılır.)
+export interface HibpRangeResponse {
+    prefix: string;
+    hashes: { suffix: string; count: number }[];
+}
+
+// checkPassword() fonksiyonunun döndürdüğü, UI'ın doğrudan kullandığı
+// sadeleştirilmiş sonuç.
+export interface PwnedPasswordResult {
+    pwned: boolean;
+    count: number;
+}

@@ -231,7 +231,7 @@ export default function FilterBar({
                         value={domainSearchValue}
                         onChange={(e) => onDomainSearchValueChange(e.target.value)}
                         onKeyDown={handleDomainInputKeyDown}
-                        placeholder="örn. izmir.bel.tr veya https://www.izmir.bel.tr"
+                        placeholder="örnek: sirket.com veya https://sirket.com"
                         className="w-full rounded-lg border border-slate-800 bg-[#0d1119] py-2 pl-9 pr-8 text-sm text-slate-200 placeholder:text-slate-600 outline-none transition-colors hover:border-slate-700 focus:border-cyan-600/60"
                     />
                     {domainSearchValue && (
