@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { AlertTriangle, CheckCircle2, X, RefreshCw, ShieldPlus, ShieldCheck, Trash2, Copy } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, CheckCircle2, X, RefreshCw, ShieldPlus, ShieldCheck, Trash2, Copy, Lock } from "lucide-react";
 import Header from "@/components/Header";
+import Sidebar from "@/components/Sidebar";
 import LeakTable from "@/components/LeakTable";
 import StatsCards from "@/components/StatsCards";
 import SubdomainScanner from "@/components/SubdomainScanner";
@@ -255,6 +257,7 @@ export default function Home() {
 
     return (
         <main className="min-h-screen bg-[#0a0d14] text-slate-100">
+            <Sidebar />
             <Header
                 onScan={handleScan}
                 scanning={scanning}
@@ -262,15 +265,25 @@ export default function Home() {
             />
 
             <div className="mx-auto max-w-7xl px-6 py-8 space-y-6">
-                {/* Araç Çubuğu: İzlenen Varlıklar / İzlemeye Ekle */}
+                {/* Araç Çubuğu: İzlenen Varlıklar / İzlemeye Ekle / Parola Testi Linki */}
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                    <button
-                        onClick={handleToggleMonitored}
-                        className="text-sm text-emerald-400 hover:text-emerald-300 underline underline-offset-2"
-                    >
-                        {showMonitored ? "İzlenen Varlıkları Gizle" : "İzlenen Varlıklar"}
-                        {monitoredAssets.length > 0 && ` (${monitoredAssets.length})`}
-                    </button>
+                    <div className="flex items-center gap-4">
+                        <button
+                            onClick={handleToggleMonitored}
+                            className="text-sm text-emerald-400 hover:text-emerald-300 underline underline-offset-2"
+                        >
+                            {showMonitored ? "İzlenen Varlıkları Gizle" : "İzlenen Varlıklar"}
+                            {monitoredAssets.length > 0 && ` (${monitoredAssets.length})`}
+                        </button>
+
+                        <Link
+                            href="/tools/password-checker"
+                            className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded-lg transition-colors"
+                        >
+                            <Lock size={13} />
+                            Parola Güvenlik Testi
+                        </Link>
+                    </div>
 
                     {currentTarget && !loading && !scanning && (
                         <button
