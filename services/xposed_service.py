@@ -25,6 +25,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 XPOSED_ANALYTICS_URL = "https://api.xposedornot.com/v1/breach-analytics"
+XPOSED_BREACHES_URL = "https://api.xposedornot.com/v1/breaches"
 
 
 async def check_email(email: str) -> list:
@@ -110,4 +111,80 @@ async def check_email(email: str) -> list:
 
         except Exception as exc:
             logger.error("XposedOrNot isteği sırasında hata oluştu: %s", exc)
+            return []
+
+
+async def check_domain_breaches(domain: str) -> list:
+    """
+    XposedOrNot'un GERÇEKTEN ücretsiz ve public olan /v1/breaches?domain=...
+    endpoint'ini kullanarak, verilen domain'in KENDİSİNİN (bir organizasyon
+    olarak) herhangi bir breach'e konu olup olmadığını sorgular. API key
+    gerektirmez.
+
+    ÖNEMLİ (KARIŞTIRILMAMASI GEREKEN NOKTA): XposedOrNot dokümantasyonunda
+    geçen /v1/domain-breaches/ ucu BUNUNLA AYNI ŞEY DEĞİLDİR. O uç:
+      - POST metodu kullanır,
+      - domain'i URL/parametre olarak DEĞİL, `x-api-key` header'ından
+        türetir,
+      - ve yalnızca DNS ile sahipliği doğrulanmış + XposedOrNot panelinden
+        API key alınmış domainler için çalışır (aksi halde 401 döner).
+    Yani "izmir.bel.tr" gibi sahibi olunmayan bir domain o uç ile
+    sorgulanamaz. Bu fonksiyon, aynı ihtiyaca (bir domain için sızıntı
+    bilgisi, key gerektirmeden) en yakın GERÇEKTEN açık uçtur.
+
+    Dönüş: XposedOrNot'un "exposedBreaches" listesi (bulunamazsa []).
+    """
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                XPOSED_BREACHES_URL,
+                params={"domain": domain},
+                timeout=10.0,
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+
+                if not isinstance(data, dict):
+                    logger.warning(
+                        "XposedOrNot /v1/breaches beklenmeyen yanıt tipi (JSON dict değil): %s",
+                        type(data),
+                    )
+                    return []
+
+                exposed_breaches = data.get("exposedBreaches") or []
+                if not isinstance(exposed_breaches, list):
+                    logger.warning(
+                        "XposedOrNot /v1/breaches: exposedBreaches beklenmeyen formatta: %s",
+                        type(exposed_breaches),
+                    )
+                    return []
+
+                logger.info(
+                    "✅ [XposedOrNot] '%s' domaini için %s adet organizasyon bazlı breach kaydı bulundu.",
+                    domain,
+                    len(exposed_breaches),
+                )
+                return exposed_breaches
+
+            elif response.status_code == 404:
+                logger.info("XposedOrNot: '%s' domaini için kayıt bulunamadı (404).", domain)
+                return []
+            elif response.status_code == 429:
+                logger.error(
+                    "❌ [XposedOrNot /v1/breaches] 429 Too Many Requests — rate limit aşıldı. "
+                    "Retry-After header: %s",
+                    response.headers.get("Retry-After"),
+                )
+                return []
+            else:
+                logger.warning(
+                    "XposedOrNot /v1/breaches beklenmeyen yanıt (%s): %s",
+                    response.status_code,
+                    response.text,
+                )
+                return []
+
+        except Exception as exc:
+            logger.error("XposedOrNot /v1/breaches isteği sırasında hata oluştu: %s", exc)
             return []

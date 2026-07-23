@@ -1,65 +1,93 @@
-# Dark Web Leaks Monitoring — Aşama 1 (Backend & Veritabanı)
+# Dark Web Leaks Monitoring
 
-## Dosya Yapısı
-```
-leak_monitor/
-├── database.py        # SQLAlchemy engine/session (SQLite: leaks.db)
-├── models.py           # breach_logs tablosu (ORM modeli)
-├── schemas.py          # Pydantic request/response şemaları
-├── seed.py             # İlk çalıştırmada mock veri ekler
-├── xposed_service.py   # XposedOrNot API entegrasyonu (httpx)
-├── main.py             # FastAPI uygulaması ve endpoint'ler
-└── requirements.txt
-```
+Dark Web Leaks Monitoring is a modern **Threat Intelligence Panel** application designed for organizations and individuals to monitor leaked credentials, threat intelligence feeds, and dark web breaches. The project consists of a powerful **FastAPI** backend and a sleek **Next.js** frontend interface.
 
-## Kurulum
+---
+
+##  Project Directory Structure
+
+```text
+MonitorLeaks.dev/
+├── app/                  # Next.js Frontend Application
+│   ├── components/       # UI Components (LeakTable, FilterBar, Badge, etc.)
+│   ├── lib/              # Utilities, types, and API clients
+│   ├── layout.tsx        # Root layout structure
+│   └── page.tsx          # Main dashboard view
+├── services/             # External Service Integrations & Adapters
+│   ├── breachdirectory_service.py
+│   ├── dns_service.py    # Domain TXT verification service
+│   ├── leakcheck_service.py
+│   ├── leakix_service.py
+│   ├── notification_service.py # Telegram / Slack notifications
+│   ├── otx_service.py    # AlienVault OTX integration
+│   ├── xposed_adapter.py
+│   └── xposed_service.py # XposedOrNot integration
+├── database.py           # SQLite database connection and session management
+├── models.py             # SQLAlchemy ORM models (BreachLog, MonitoredAsset, etc.)
+├── schemas.py            # Pydantic data validation schemas
+├── main.py               # FastAPI core application and endpoints
+├── config.py             # Configuration and environment variable management
+└── requirements.txt      # Python dependencies
+
+
+##  Technologies & Services
+
+### Backend
+* **FastAPI:** High-performance, asynchronous Python web framework.
+* **SQLAlchemy & SQLite:** Lightweight and secure database management.
+* **APScheduler:** Automated background asset scans at configurable intervals.
+* **HTTPX:** Asynchronous client for external API requests.
+
+### Frontend
+* **Next.js (App Router):** Modern and fast React-based framework.
+* **Tailwind CSS:** Flexible and elegant styling components.
+
+### Integrated Services
+* **XposedOrNot API:** Email and organization-based breach scanning.
+* **LeakCheck API:** In-depth email and account leak analysis.
+* **AlienVault OTX:** Domain and indicator of compromise (IoC) enrichment.
+* **LeakIX:** Open service and data leak exposure scanning.
+* **BreachDirectory:** Alternative breach directory search.
+
+---
+
+## Installation and Setup
+
+### 1. Backend Setup
+Clone the repository, navigate to the backend directory, and install dependencies:
+
 ```bash
 pip install -r requirements.txt
-# veya tek tek:
-pip install fastapi uvicorn sqlalchemy httpx pydantic
-```
 
-## Çalıştırma
+### 2. Environment Variables (.env)
+Create a `.env` file in the root directory and configure your API keys and parameters:
+
+```env
+ASSET_SCAN_INTERVAL_HOURS=24
+XPOSED_API_KEY=your_key_here
+LEAKCHECK_API_KEY=your_key_here
+OTX_API_KEY=your_key_here
+LEAKIX_API_KEY=your_key_here
+
+### 3. Running the Backend
+
+Start the FastAPI application using `uvicorn`:
+
 ```bash
-uvicorn main:app --reload
-```
-Uygulama ilk açılışta `leaks.db` dosyasını oluşturur, tablo boşsa
-görseldeki `izmir.bel.tr / yagizer` kaydı dahil 3 mock satır ekler.
+python -m uvicorn main:app --reload
 
-Swagger arayüzü: http://127.0.0.1:8000/docs
+### 4. Frontend Setup
 
-## Endpoint'ler
+Navigate to the frontend directory (`app` or your frontend root), install dependencies, and run the development server:
 
-### `GET /api/v1/leaks`
-Tüm sızıntı kayıtlarını (en yeni önce) JSON listesi olarak döner.
 ```bash
-curl http://127.0.0.1:8000/api/v1/leaks
-```
+npm install
+npm run dev
 
-### `GET /api/v1/scan?email=ornek@site.com`
-XposedOrNot'un ücretsiz servisine canlı sorgu atar, bulunan her sızıntı
-kaynağı için `breach_logs` tablosuna yeni bir satır ekler
-(`certainty=Confirmed`, `priority=High`, `market=XposedOrNot`) ve
-eklenen satırları döner. E-posta hiçbir sızıntıda bulunamadıysa boş
-liste `[]` döner.
-```bash
-curl "http://127.0.0.1:8000/api/v1/scan?email=test@example.com"
-```
+###  Core Features
 
-**Not:** XposedOrNot rate limiti ~2 istek/saniyedir; `xposed_service.py`
-429/5xx durumlarını yakalayıp anlamlı hata mesajıyla 502 döner.
-
-## Test Notu
-Bu sandbox ortamında `api.xposedornot.com`'a dışarıya çıkış izni
-olmadığı için `/api/v1/scan` uçtan uca test edilemedi, ancak kodu
-kendi makinenizde (internet erişimi olan) çalıştırdığınızda
-sorunsuz çalışacaktır. `/api/v1/leaks` ve veritabanı/seed kısmı
-bu ortamda test edildi ve doğrulandı (görseldeki veriyle birebir
-eşleşen mock kayıt dahil).
-
-## Sıradaki Aşama İçin Notlar
-- `discovery_date` şu an string olarak tutuluyor; ileride sıralama/filtreleme
-  için gerçek `DateTime` tipine geçmek isteyebilirsiniz.
-- Frontend'in tablo görselindeki "Status/Priority/Certainty" filtreleri için
-  `GET /api/v1/leaks` uç noktasına query parametreleri (örn. `?status=Active`)
-  eklemek kolayca genişletilebilir.
+* **Multi-Asset Monitoring:** Register email addresses and domains to track them via periodic scans.
+* **DNS TXT Verification:** Verify domain ownership securely using DNS TXT records.
+* **Live Scanning & Deduplication (Dedup):** Results fetched concurrently from multiple services are automatically cleaned, filtered, and deduplicated before persisting to the database.
+* **Real-time Notifications:** Receive instant breach alerts via Telegram or Slack integrations.
+* **Password Security (HIBP):** Check password safety leveraging the Have IBeenPwned range API.
