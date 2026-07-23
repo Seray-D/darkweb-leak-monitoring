@@ -27,7 +27,8 @@ from typing import List, Tuple
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -48,6 +49,7 @@ from services import (
 )
 from services.xposed_adapter import normalize_xposed_results
 from services.otx_service import search_otx
+from services.event_bus import live_feed_bus, event_stream
 
 load_dotenv()
 
@@ -86,6 +88,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/api/v1/live-feed/stream")
+async def live_feed_stream(request: Request):
+    """Tarama sürecindeki olayları SSE ile anlık akıtır."""
+    return StreamingResponse(
+        event_stream(request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # ters proxy varsa buffering'i kapat
+        },
+    )
 
 
 @app.get("/api/v1/test-otx/{domain}")
@@ -462,8 +478,30 @@ async def check_password(prefix: str):
 
 
 # --------------------------------------------------------------------- #
-# İzlenen Varlıklar Taramaları Yardımcı Fonksiyonları
+# İzlenen Varlıklar Taramaları Yardımcı Fonksiyonları ve Live Feed Tracker
 # --------------------------------------------------------------------- #
+
+
+async def _tracked(coro, service_name: str, target_label: str):
+    """Bir servis çağrısını başlangıç/bitiş/hata olaylarıyla LiveFeedBus'a yayınlar."""
+    await live_feed_bus.publish(
+        "service_query", f"{service_name} sorgulanıyor: {target_label}",
+        service=service_name, target=target_label,
+    )
+    try:
+        result = await coro
+        count = len(result) if isinstance(result, list) else 0
+        await live_feed_bus.publish(
+            "service_result", f"{service_name} tamamlandı: {count} sonuç ({target_label})",
+            service=service_name, target=target_label, count=count,
+        )
+        return result
+    except Exception as exc:
+        await live_feed_bus.publish(
+            "service_error", f"{service_name} hata verdi ({target_label}): {exc}",
+            service=service_name, target=target_label,
+        )
+        raise
 
 
 async def _gather_leaks_for_asset(asset: MonitoredAsset) -> List[NormalizedLeak]:
@@ -498,21 +536,21 @@ async def _gather_leaks_for_asset(asset: MonitoredAsset) -> List[NormalizedLeak]
     task_metadata = []
 
     if domain and not is_email:
-        tasks.append(leakix_service.search_leakix(domain))
+        tasks.append(_tracked(leakix_service.search_leakix(domain), "LeakIX", domain))
         task_metadata.append({"type": "leakix"})
 
-        tasks.append(otx_service.search_otx(domain, ""))
+        tasks.append(_tracked(otx_service.search_otx(domain, ""), "AlienVault OTX", domain))
         task_metadata.append({"type": "otx_domain"})
 
     for email in emails_to_scan:
-        tasks.append(_safe_xposed_check(email))
+        tasks.append(_tracked(_safe_xposed_check(email), "XposedOrNot", email))
         task_metadata.append({"type": "xposed", "email": email})
 
         otx_query_domain = domain if domain else email.split("@")[-1]
-        tasks.append(otx_service.search_otx(otx_query_domain, email))
+        tasks.append(_tracked(otx_service.search_otx(otx_query_domain, email), "AlienVault OTX", email))
         task_metadata.append({"type": "otx_email"})
 
-        tasks.append(breachdirectory_service.search_breachdirectory(email))
+        tasks.append(_tracked(breachdirectory_service.search_breachdirectory(email), "BreachDirectory", email))
         task_metadata.append({"type": "breachdirectory"})
 
     responses = await asyncio.gather(*tasks, return_exceptions=True)
@@ -656,25 +694,27 @@ async def scan(target: str, db: Session = Depends(get_db)):
         deleted_count,
     )
 
+    await live_feed_bus.publish("scan_start", f"Tarama başlatıldı: {cleaned_target}", target=cleaned_target)
+
     tasks = []
     task_metadata = []
 
     if domain:
-        tasks.append(leakix_service.search_leakix(domain))
+        tasks.append(_tracked(leakix_service.search_leakix(domain), "LeakIX", domain))
         task_metadata.append({"type": "leakix"})
 
-        tasks.append(otx_service.search_otx(domain, ""))
+        tasks.append(_tracked(otx_service.search_otx(domain, ""), "AlienVault OTX", domain))
         task_metadata.append({"type": "otx_domain"})
 
     for email in emails_to_scan:
-        tasks.append(_safe_xposed_check(email))
+        tasks.append(_tracked(_safe_xposed_check(email), "XposedOrNot", email))
         task_metadata.append({"type": "xposed", "email": email})
 
         otx_query_domain = domain if domain else email.split("@")[-1]
-        tasks.append(otx_service.search_otx(otx_query_domain, email))
+        tasks.append(_tracked(otx_service.search_otx(otx_query_domain, email), "AlienVault OTX", email))
         task_metadata.append({"type": "otx_email"})
 
-        tasks.append(breachdirectory_service.search_breachdirectory(email))
+        tasks.append(_tracked(breachdirectory_service.search_breachdirectory(email), "BreachDirectory", email))
         task_metadata.append({"type": "breachdirectory"})
 
     responses = await asyncio.gather(*tasks, return_exceptions=True)
@@ -703,6 +743,7 @@ async def scan(target: str, db: Session = Depends(get_db)):
 
     if not all_results:
         logger.info("Tarama tamamlandı, hiçbir sızıntı bulunamadı (target=%s).", cleaned_target)
+        await live_feed_bus.publish("scan_complete", f"Tarama tamamlandı: {cleaned_target} — 0 kayıt", target=cleaned_target, count=0)
         return []
 
     seen_keys: set = set()
@@ -747,6 +788,16 @@ async def scan(target: str, db: Session = Depends(get_db)):
 
     for obj in db_objects:
         db.refresh(obj)
+        await live_feed_bus.publish(
+            "leak_found",
+            f"Yeni kayıt: {obj.asset or obj.email_leak} — {obj.leak_type} ({obj.raw_source})",
+            source=obj.raw_source, leak_type=obj.leak_type,
+        )
+
+    await live_feed_bus.publish(
+        "scan_complete", f"Tarama tamamlandı: {cleaned_target} — {len(db_objects)} tekil kayıt",
+        target=cleaned_target, count=len(db_objects),
+    )
 
     try:
         await notification_service.send_leak_alert(db_objects)

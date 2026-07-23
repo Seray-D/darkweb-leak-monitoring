@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X, LayoutDashboard, ShieldCheck, KeyRound, Radar } from "lucide-react";
+import { Menu, X, LayoutDashboard, ShieldCheck, KeyRound, Radar, Radio } from "lucide-react";
 
 interface NavItem {
     href: string;
@@ -18,6 +18,12 @@ const NAV_ITEMS: NavItem[] = [
         label: "Ana Sayfa",
         description: "Canlı tarama ve sızıntı paneli",
         icon: LayoutDashboard,
+    },
+    {
+        href: "/live-feed",
+        label: "Canlı Tehdit Akışı",
+        description: "Anlık OSINT sorgu & sızıntı logu",
+        icon: Radio,
     },
     {
         href: "/assets",
@@ -65,9 +71,8 @@ export default function Sidebar() {
             <button
                 onClick={() => setOpen(true)}
                 aria-label="Menüyü aç"
-                className={`fixed left-4 top-4 z-40 flex h-10 w-10 items-center justify-center rounded-lg border border-slate-800 bg-[#0a0d14]/90 text-slate-300 backdrop-blur transition hover:border-cyan-500/40 hover:text-cyan-300 ${
-                    open ? "pointer-events-none opacity-0" : "opacity-100"
-                }`}
+                className={`fixed left-4 top-4 z-40 flex h-10 w-10 items-center justify-center rounded-lg border border-slate-800 bg-[#0a0d14]/90 text-slate-300 backdrop-blur transition hover:border-cyan-500/40 hover:text-cyan-300 ${open ? "pointer-events-none opacity-0" : "opacity-100"
+                    }`}
             >
                 <Menu size={18} />
             </button>
@@ -76,16 +81,14 @@ export default function Sidebar() {
             <div
                 onClick={() => setOpen(false)}
                 aria-hidden="true"
-                className={`fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity duration-300 ${
-                    open ? "opacity-100" : "pointer-events-none opacity-0"
-                }`}
+                className={`fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity duration-300 ${open ? "opacity-100" : "pointer-events-none opacity-0"
+                    }`}
             />
 
             {/* Sidebar Paneli */}
             <aside
-                className={`fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-slate-800 bg-[#0a0d14]/95 backdrop-blur-xl transition-transform duration-300 ease-out ${
-                    open ? "translate-x-0" : "-translate-x-full"
-                }`}
+                className={`fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-slate-800 bg-[#0a0d14]/95 backdrop-blur-xl transition-transform duration-300 ease-out ${open ? "translate-x-0" : "-translate-x-full"
+                    }`}
                 aria-hidden={!open}
             >
                 <div className="flex items-center justify-between border-b border-slate-800 px-5 py-5">
@@ -118,17 +121,15 @@ export default function Sidebar() {
                             <Link
                                 key={item.href}
                                 href={item.href}
-                                className={`group flex items-start gap-3 rounded-lg border px-3 py-2.5 text-sm transition ${
-                                    isActive
+                                className={`group flex items-start gap-3 rounded-lg border px-3 py-2.5 text-sm transition ${isActive
                                         ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-300"
                                         : "border-transparent text-slate-400 hover:border-slate-700 hover:bg-slate-900/60 hover:text-slate-200"
-                                }`}
+                                    }`}
                             >
                                 <Icon
                                     size={17}
-                                    className={`mt-0.5 shrink-0 ${
-                                        isActive ? "text-cyan-400" : "text-slate-500 group-hover:text-slate-300"
-                                    }`}
+                                    className={`mt-0.5 shrink-0 ${isActive ? "text-cyan-400" : "text-slate-500 group-hover:text-slate-300"
+                                        }`}
                                 />
                                 <span>
                                     <span className="block font-medium">{item.label}</span>
