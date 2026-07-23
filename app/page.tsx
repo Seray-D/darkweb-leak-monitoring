@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle2, X, RefreshCw, ShieldPlus, ShieldCheck, Tra
 import Header from "@/components/Header";
 import LeakTable from "@/components/LeakTable";
 import StatsCards from "@/components/StatsCards";
+import SubdomainScanner from "@/components/SubdomainScanner";
 import { scanEmail, addMonitoredAsset, getMonitoredAssets, deleteMonitoredAsset, rescanMonitoredAsset, verifyMonitoredAsset } from "@/lib/api";
 import { Leak, MonitoredAsset } from "@/lib/types";
 
@@ -381,6 +382,9 @@ export default function Home() {
                         )}
                     </div>
                 )}
+
+                {/* Pasif Subdomain Keşfi (crt.sh) */}
+                <SubdomainScanner />
 
                 {/* İstatistik Kartları */}
                 <StatsCards leaks={leaks} />

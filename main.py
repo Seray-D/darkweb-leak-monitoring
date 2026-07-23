@@ -39,6 +39,7 @@ from models import AssetBreachLog, BreachLog, MonitoredAsset
 from schemas import MonitoredAssetCreate, MonitoredAssetOut, NormalizedLeak
 from services import (
     breachdirectory_service,
+    crtsh_service,
     dns_service,
     leakix_service,
     notification_service,
@@ -134,6 +135,29 @@ async def test_breachdirectory_endpoint(email: str):
         "email": email,
         "count": len(results),
         "results": results,
+    }
+
+
+@app.get("/api/v1/osint/subdomains/{domain}")
+async def get_subdomains(domain: str):
+    """
+    Pasif Subdomain Keşfi (crt.sh / Certificate Transparency Logs).
+
+    Verilen domain için crt.sh'de kayıtlı geçmiş SSL sertifikalarındaki
+    alt alan adlarını listeler. HİÇBİR DNS sorgusu veya domain sahiplik
+    doğrulaması YAPILMAZ — tamamen pasif, ücretsiz bir OSINT kaynağıdır.
+    """
+    cleaned_domain = _extract_domain(domain)
+    if not cleaned_domain:
+        raise HTTPException(status_code=400, detail="Geçerli bir domain girin.")
+
+    subdomains = await crtsh_service.search_crtsh(cleaned_domain)
+
+    return {
+        "domain": cleaned_domain,
+        "source": "crt.sh",
+        "count": len(subdomains),
+        "subdomains": subdomains,
     }
 
 

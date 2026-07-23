@@ -183,9 +183,6 @@ export async function rescanMonitoredAsset(id: number): Promise<MonitoredAsset> 
  * `leak-monitor-verify=<verification_token>` değerinin yayınlanıp
  * yayınlanmadığını backend üzerinden kontrol ettirir. Eşleşme bulunursa
  * varlık `is_verified = true` olarak işaretlenir.
- *
- * Backend hata durumunda (404 / 400) `{ detail: string }` gövdesi döner;
- * bu mesaj olduğu gibi Error içine taşınır ki UI kullanıcıya gösterebilsin.
  */
 export async function verifyMonitoredAsset(
     id: number
@@ -202,4 +199,19 @@ export async function verifyMonitoredAsset(
     }
 
     return data;
+}
+
+/**
+ * crt.sh üzerinden DNS doğrulaması gerektirmeden pasif subdomain taraması yapar.
+ */
+export async function getSubdomains(domain: string) {
+    const res = await fetch(
+        `${API_BASE}/api/v1/osint/subdomains/${encodeURIComponent(domain)}`,
+        { cache: "no-store" }
+    );
+    if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.detail || "Subdomain taraması sırasında hata oluştu.");
+    }
+    return res.json();
 }
