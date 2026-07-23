@@ -19,12 +19,33 @@ async function clearLeaks(): Promise<void> {
     }
 }
 
+// Yardımcı fonksiyon: Backend'den gelen AssetBreachLog verisini Leak tipine güvenli şekilde dönüştürür
+function mapBreachLogsToLeaks(logs: any[]): Leak[] {
+    return logs.map((log) => ({
+        id: log.id,
+        asset: log.asset,
+        email_leak: log.email || log.email_leak,
+        leaked_password: log.password || log.leaked_password,
+        leak_type: log.type || log.leak_type,
+        market: log.source || log.market,
+        last_seen: log.last_seen || log.date,
+        certainty: log.certainty || "Medium",
+        status: log.status || "New",
+        priority: log.priority || "Medium",
+        discovery_date: log.discovery_date || log.date || new Date().toISOString().split('T')[0],
+        raw_source: log.raw_source || log.source,
+    }));
+}
+
 export default function Home() {
     const [leaks, setLeaks] = useState<Leak[]>([]);
     const [loading, setLoading] = useState(true);
     const [scanning, setScanning] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [infoMessage, setInfoMessage] = useState<string | null>(null);
+
+    // Market / Source filtresi için state
+    const [marketFilter, setMarketFilter] = useState("Tüm Marketler");
 
     // İzlemeye Ekle butonu, en son aratılan hedefe (e-posta/domain) göre çalışır
     const [currentTarget, setCurrentTarget] = useState<string | null>(null);
@@ -115,9 +136,10 @@ export default function Home() {
         setAddingToMonitoring(true);
         setError(null);
         try {
+            const cleanTarget = currentTarget.trim();
             // 1. Varlığı izlemeye ekle
-            const newAsset = await addMonitoredAsset(currentTarget);
-            setInfoMessage(`"${currentTarget}" izleme listesine eklendi. Sızıntılar taranıyor...`);
+            const newAsset = await addMonitoredAsset(cleanTarget);
+            setInfoMessage(`"${cleanTarget}" izleme listesine eklendi. Sızıntılar taranıyor...`);
 
             // 2. Anında ilk taramasını başlat ki sızıntı sayısı 0 kalmasın
             const updated = await rescanMonitoredAsset(newAsset.id);
@@ -129,10 +151,10 @@ export default function Home() {
             }
 
             if (updated.breach_logs) {
-                setLeaks(updated.breach_logs);
+                setLeaks(mapBreachLogsToLeaks(updated.breach_logs));
             }
 
-            setInfoMessage(`"${currentTarget}" izlemeye eklendi ve sızıntı geçmişi güncellendi.`);
+            setInfoMessage(`"${cleanTarget}" izlemeye eklendi ve sızıntı geçmişi güncellendi.`);
         } catch (err) {
             setError(
                 err instanceof Error ? err.message : "İzlemeye eklenirken hata oluştu."
@@ -184,7 +206,7 @@ export default function Home() {
             setMonitoredAssets((prev) => prev.map((a) => (a.id === id ? updated : a)));
 
             if (updated.breach_logs) {
-                setLeaks(updated.breach_logs);
+                setLeaks(mapBreachLogsToLeaks(updated.breach_logs));
             }
         } catch (err) {
             setMonitoredError(
@@ -393,6 +415,8 @@ export default function Home() {
                 <LeakTable
                     leaks={leaks}
                     loading={loading || scanning}
+                    marketFilter={marketFilter}
+                    onMarketFilterChange={setMarketFilter}
                     onLeaksUpdate={handleLeaksUpdate}
                 />
             </div>

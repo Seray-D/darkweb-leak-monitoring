@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Leak } from "@/lib/types";
 import Badge from "./Badge";
 import PasswordCell, { SocLeakDetailModal } from "./PasswordCell";
-import FilterBar, { STATUS_OPTIONS, PRIORITY_OPTIONS } from "./FilterBar";
+import FilterBar, { STATUS_OPTIONS, PRIORITY_OPTIONS, MARKET_OPTIONS } from "./FilterBar";
 import {
     Fingerprint,
     ExternalLink,
@@ -22,9 +22,15 @@ import {
 interface LeakTableProps {
     leaks: Leak[];
     loading: boolean;
+    marketFilter?: string;
+    onMarketFilterChange?: React.Dispatch<React.SetStateAction<string>>;
+    onLeaksUpdate?: (updatedLeaks: Leak[]) => void;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const API_BASE_URL =
+    process.env.NEXT_PUBLIC_API_BASE ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    "http://127.0.0.1:8000";
 
 const COLUMNS = [
     "ASSET",
@@ -41,8 +47,27 @@ const COLUMNS = [
 ];
 
 const PART_SEPARATOR = " • ";
+// Add this helper function at the top level of your component file, e.g., right under splitLeakType or near your utility functions.
 
-// Yardımcı Fonksiyonlar
+function getPriorityColor(priority: string): string {
+    switch (priority?.toLowerCase()) {
+        case "kritik":
+        case "critical":
+            return "bg-red-500/10 text-red-400 border-red-500/20";
+        case "yüksek":
+        case "high":
+            return "bg-orange-500/10 text-orange-400 border-orange-500/20";
+        case "orta":
+        case "medium":
+            return "bg-amber-500/10 text-amber-400 border-amber-500/20";
+        case "düşük":
+        case "low":
+            return "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
+        default:
+            return "bg-slate-800 text-slate-400 border-slate-700";
+    }
+}
+
 function splitLeakType(leakType: string): { title: string; subtitle: string | null } {
     if (!leakType) {
         return { title: "Bilinmeyen", subtitle: null };
@@ -77,19 +102,38 @@ function buildInvestigationLink(leak: Leak): string {
     }
 }
 
-export default function LeakTable({ leaks, loading }: LeakTableProps) {
+export default function LeakTable({
+    leaks,
+    loading,
+    marketFilter,
+    onMarketFilterChange,
+    onLeaksUpdate,
+}: LeakTableProps) {
     const [search, setSearch] = useState("");
     const [status, setStatus] = useState<string>(STATUS_OPTIONS[0]);
     const [priority, setPriority] = useState<string>(PRIORITY_OPTIONS[0]);
+    const [market, setMarket] = useState<string>(marketFilter ?? MARKET_OPTIONS[0]);
 
-    // Detay görünümü yönetimi
+    // page.tsx tarafından dışarıdan (kontrollü) bir marketFilter güncellemesi
+    // yapılırsa (örn. global "filtreleri temizle" veya URL senkronizasyonu),
+    // iç state'i onunla senkron tut.
+    useEffect(() => {
+        if (marketFilter !== undefined && marketFilter !== market) {
+            setMarket(marketFilter);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [marketFilter]);
+
+    const handleMarketChange = (value: string) => {
+        setMarket(value);
+        onMarketFilterChange?.(value);
+    };
+
     const [selectedLeak, setSelectedLeak] = useState<Leak | null>(null);
     const [copiedAssetId, setCopiedAssetId] = useState<number | null>(null);
 
-    // Yerel state
     const [leaksState, setLeaksState] = useState<Leak[]>(leaks);
 
-    // Domain / E-posta Tarama state'leri
     const [domainSearchValue, setDomainSearchValue] = useState("");
     const [domainSearchActive, setDomainSearchActive] = useState(false);
     const [domainSearchLoading, setDomainSearchLoading] = useState(false);
@@ -99,6 +143,15 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
         setLeaksState(leaks);
     }, [leaks]);
 
+    const handleUpdateLeak = (id: number, changes: Partial<Leak>) => {
+        setLeaksState((prev) => {
+            const updated = prev.map((l) => (l.id === id ? { ...l, ...changes } : l));
+            onLeaksUpdate?.(updated);
+            return updated;
+        });
+        setSelectedLeak((prev) => (prev && prev.id === id ? { ...prev, ...changes } : prev));
+    };
+
     const handleDomainSearchSubmit = async () => {
         const query = domainSearchValue.trim();
         if (!query) return;
@@ -106,7 +159,6 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
         setDomainSearchLoading(true);
         setDomainSearchError(null);
 
-        // Domain araması yapıldığında yerel tablo filtrelerini sıfırla ki gelen sonuçlar gizlenmesin
         setSearch("");
         setStatus(STATUS_OPTIONS[0]);
         setPriority(PRIORITY_OPTIONS[0]);
@@ -144,13 +196,6 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
         setLeaksState(leaks);
     };
 
-    const handleUpdateLeak = (id: number, changes: Partial<Leak>) => {
-        setLeaksState((prev) =>
-            prev.map((l) => (l.id === id ? { ...l, ...changes } : l))
-        );
-        setSelectedLeak((prev) => (prev && prev.id === id ? { ...prev, ...changes } : prev));
-    };
-
     const handleCopyAsset = (id: number, asset: string) => {
         navigator.clipboard.writeText(asset);
         setCopiedAssetId(id);
@@ -166,24 +211,29 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
             const matchesPriority =
                 priority === PRIORITY_OPTIONS[0] || leak.priority === priority;
 
+            const matchesMarket =
+                market === MARKET_OPTIONS[0] || leak.market === market;
+
             const matchesQuery =
                 query === "" ||
                 [leak.asset, leak.email_leak, leak.leak_type, leak.market].some(
                     (field) => field?.toLowerCase().includes(query)
                 );
 
-            return matchesStatus && matchesPriority && matchesQuery;
+            return matchesStatus && matchesPriority && matchesMarket && matchesQuery;
         });
-    }, [leaksState, search, status, priority]);
+    }, [leaksState, search, status, priority, market]);
 
     const relatedLeaksForSelected = useMemo(() => {
         if (!selectedLeak) return [];
         return leaksState.filter((l) => {
             const sameAsset =
-                l.asset && selectedLeak.asset &&
+                l.asset &&
+                selectedLeak.asset &&
                 l.asset.toLowerCase() === selectedLeak.asset.toLowerCase();
             const sameEmail =
-                l.email_leak && selectedLeak.email_leak &&
+                l.email_leak &&
+                selectedLeak.email_leak &&
                 l.email_leak.toLowerCase() === selectedLeak.email_leak.toLowerCase();
             return sameAsset || sameEmail;
         });
@@ -192,7 +242,8 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
     const hasActiveFilters =
         search.trim() !== "" ||
         status !== STATUS_OPTIONS[0] ||
-        priority !== PRIORITY_OPTIONS[0];
+        priority !== PRIORITY_OPTIONS[0] ||
+        market !== MARKET_OPTIONS[0];
 
     if (loading) {
         return (
@@ -207,7 +258,6 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
 
     return (
         <div>
-            {/* FilterBar */}
             <FilterBar
                 search={search}
                 onSearchChange={setSearch}
@@ -215,6 +265,8 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
                 onStatusChange={setStatus}
                 priority={priority}
                 onPriorityChange={setPriority}
+                market={market}
+                onMarketChange={handleMarketChange}
                 resultCount={filteredLeaks.length}
                 totalCount={leaksState.length}
                 filteredLeaks={filteredLeaks}
@@ -227,17 +279,12 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
                 domainSearchActive={domainSearchActive}
             />
 
-            {/* TABLO / BOŞ DURUM ALANI */}
             {leaksState.length === 0 && !domainSearchActive ? (
                 <div className="rounded-lg border border-slate-800 bg-[#101520]">
                     <div className="flex flex-col items-center justify-center gap-3 py-20 text-slate-500">
                         <Inbox size={28} className="text-slate-600" />
                         <p className="text-sm font-medium text-slate-400">
                             Henüz kayıtlı sızıntı bulunamadı.
-                        </p>
-                        <p className="text-xs text-slate-600">
-                            Yukarıdaki arama çubuğuna bir domain (örn:{" "}
-                            <code className="text-cyan-500">example.com</code>) veya e-posta girerek tarama başlatabilirsiniz.
                         </p>
                     </div>
                 </div>
@@ -248,11 +295,6 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
                         <p className="text-sm">
                             Aramanıza veya filtrelerinize uygun sızıntı kaydı bulunamadı.
                         </p>
-                        {hasActiveFilters && (
-                            <p className="text-xs text-slate-600">
-                                Farklı bir arama terimi deneyin veya filtreleri temizleyin.
-                            </p>
-                        )}
                     </div>
                 </div>
             ) : (
@@ -362,7 +404,6 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
                 </div>
             )}
 
-            {/* Sağ Detay Paneli (Drawer) */}
             <LeakDetailDrawer
                 leak={selectedLeak}
                 relatedLeaks={relatedLeaksForSelected}
@@ -371,7 +412,6 @@ export default function LeakTable({ leaks, loading }: LeakTableProps) {
                 onSelectLeak={(l) => setSelectedLeak(l)}
             />
 
-            {/* SOC Modal */}
             {selectedLeak && typeof SocLeakDetailModal === "function" && (
                 <SocLeakDetailModal
                     leak={selectedLeak}
