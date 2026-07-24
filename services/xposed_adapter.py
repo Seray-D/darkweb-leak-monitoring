@@ -22,6 +22,7 @@ Girdi artık /v1/breach-analytics üzerinden gelen DETAYLI breach dict'leri:
 """
 
 import logging
+import urllib.parse
 from typing import List
 
 from schemas import NormalizedLeak
@@ -32,6 +33,21 @@ PART_SEPARATOR = " • "
 
 # password_risk alanına göre öncelik eşlemesi.
 _CRITICAL_RISK_HINTS = ("plaintext", "plain", "easytocrack", "easy_to_crack")
+
+# XposedOrNot'un breach-analytics API'si sızıntı için orijinal bir
+# indirme/kaynak linki DÖNMEZ — yalnızca metadata (breach, xposed_data,
+# xposed_date, password_risk, verified...) döner. Bu yüzden "url" alanı
+# eskiden hiç doldurulmuyor ve arayüzde "-" olarak görünüyordu. Artık gerçek
+# bir link yoksa breach adına göre otomatik bir DuckDuckGo arama linki
+# üretiyoruz, böylece kullanıcı tek tıkla araştırma yapabiliyor.
+DUCKDUCKGO_SEARCH_URL_TEMPLATE = "https://html.duckduckgo.com/html/?q={query}"
+
+
+def _build_fallback_investigation_url(breach_name: str) -> str:
+    """Breach adından bir DuckDuckGo arama linki üretir (gerçek kaynak linki yoksa)."""
+    label = (breach_name or "").strip() or "veri sızıntısı"
+    query = urllib.parse.quote_plus(f"{label} breach leak")
+    return DUCKDUCKGO_SEARCH_URL_TEMPLATE.format(query=query)
 
 
 def _priority_from_password_risk(password_risk: str, verified: bool) -> str:
@@ -75,6 +91,12 @@ def normalize_xposed_result(raw: dict, email: str) -> NormalizedLeak:
     else:
         leaked_password = "N/A"
 
+    # API bugün gerçek bir link göndermiyor, ama ileride "url"/"reference"
+    # gibi bir alan eklerse önce onu kullanmaya çalışıyoruz; yoksa
+    # DuckDuckGo aramasına düşüyoruz. Sonuç asla boş kalmıyor.
+    real_url = (raw.get("url") or raw.get("reference") or "").strip()
+    investigation_url = real_url or _build_fallback_investigation_url(breach_name)
+
     return NormalizedLeak(
         asset=raw.get("domain") or domain,
         email_leak=email,
@@ -86,6 +108,7 @@ def normalize_xposed_result(raw: dict, email: str) -> NormalizedLeak:
         status="Active",
         priority=_priority_from_password_risk(password_risk, verified),
         raw_source=breach_name,
+        url=investigation_url,
     )
 
 

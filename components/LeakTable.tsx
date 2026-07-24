@@ -17,6 +17,7 @@ import {
     Clock,
     Server,
     Eye,
+    Link2,
 } from "lucide-react";
 
 interface LeakTableProps {
@@ -80,6 +81,54 @@ function splitLeakType(leakType: string): { title: string; subtitle: string | nu
         title: leakType.slice(0, idx),
         subtitle: leakType.slice(idx + PART_SEPARATOR.length),
     };
+}
+
+// Backend (xposed_adapter.py), gerçek bir kaynak linki olmayan sızıntılar
+// için (ör. XposedOrNot) otomatik olarak bir DuckDuckGo arama linki üretir.
+// Burada bu durumu ayırt edip kullanıcıya farklı bir etiket gösteriyoruz,
+// böylece "gerçek indirme linki" ile "araştırma önerisi" karışmıyor.
+function isDuckDuckGoFallbackUrl(url: string): boolean {
+    return url.includes("duckduckgo.com");
+}
+
+function UrlDetailRow({ url }: { url: string }) {
+    const trimmed = (url || "").trim();
+
+    if (!trimmed || trimmed === "-") {
+        return (
+            <div className="flex items-start justify-between gap-4 text-sm">
+                <div className="flex items-center gap-1.5 text-slate-500">
+                    <Link2 size={14} />
+                    URL
+                </div>
+                <div className="text-right text-slate-500">-</div>
+            </div>
+        );
+    }
+
+    const isFallback = isDuckDuckGoFallbackUrl(trimmed);
+
+    return (
+        <div className="flex items-start justify-between gap-4 text-sm">
+            <div className="flex items-center gap-1.5 text-slate-500">
+                <Link2 size={14} />
+                URL
+            </div>
+            <a
+                href={trimmed}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`flex items-center gap-1 text-right hover:underline ${
+                    isFallback
+                        ? "text-amber-400 hover:text-amber-300"
+                        : "text-cyan-400 hover:text-cyan-300"
+                }`}
+            >
+                {isFallback ? "Web'de Ara (DuckDuckGo)" : "Kaynağı Görüntüle"}
+                <ExternalLink size={12} />
+            </a>
+        </div>
+    );
 }
 
 function buildInvestigationLink(leak: Leak): string {
@@ -494,6 +543,7 @@ function LeakDetailDrawer({
                                 label="Keşif Tarihi"
                                 value={leak.discovery_date}
                             />
+                            <UrlDetailRow url={leak.url || ""} />
 
                             <div className="flex gap-3">
                                 <div className="flex-1">
