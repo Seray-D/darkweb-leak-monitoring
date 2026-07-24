@@ -167,13 +167,28 @@ async def get_subdomains(domain: str):
     if not cleaned_domain:
         raise HTTPException(status_code=400, detail="Geçerli bir domain girin.")
 
-    subdomains = await crtsh_service.search_crtsh(cleaned_domain)
+    try:
+        result = await crtsh_service.search_subdomains(cleaned_domain)
+    except crtsh_service.SubdomainLookupError as exc:
+        # ÖNEMLİ: Bu blok artık yalnızca HEM crt.sh HEM DE yedek kaynak
+        # (HackerTarget) aynı anda başarısız olduğunda tetiklenir — tekil
+        # crt.sh kesintileri kullanıcıya hiç yansımadan otomatik olarak
+        # yedeğe düşer. Buraya düşülmesi gerçek bir servis kesintisi demektir,
+        # bu yüzden artık sessizce "0 sonuç" DÖNMÜYORUZ.
+        logger.error("Subdomain sorgusu başarısız oldu (domain=%s): %s", cleaned_domain, exc)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "crt.sh ve yedek kaynak (HackerTarget) şu anda ikisi de yanıt "
+                "vermiyor. Lütfen birkaç dakika sonra tekrar deneyin."
+            ),
+        ) from exc
 
     return {
         "domain": cleaned_domain,
-        "source": "crt.sh",
-        "count": len(subdomains),
-        "subdomains": subdomains,
+        "source": result.source,  # "crt.sh" veya "hackertarget" — hangisi başarılı olduysa
+        "count": len(result.subdomains),
+        "subdomains": result.subdomains,
     }
 
 
