@@ -1,4 +1,11 @@
-import { HibpRangeResponse, Leak, MonitoredAsset, PwnedPasswordResult } from "./types";
+import {
+    HibpRangeResponse,
+    Leak,
+    MonitoredAsset,
+    PwnedPasswordResult,
+    SubdomainSearchResult,
+    SubdomainLivenessResponse,
+} from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -104,9 +111,7 @@ export async function clearLeaks(): Promise<void> {
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* İzlenen Varlıklar (Monitored Assets) modülü — bkz. lib/types.ts      */
-/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ *//* İzlenen Varlıklar (Monitored Assets) modülü — bkz. lib/types.ts      *//* ------------------------------------------------------------------ */
 
 /**
  * Verilen e-posta veya domain'i izleme listesine ekler.
@@ -202,9 +207,10 @@ export async function verifyMonitoredAsset(
 }
 
 /**
- * crt.sh üzerinden DNS doğrulaması gerektirmeden pasif subdomain taraması yapar.
+ * crt.sh üzerinden (gerekirse HackerTarget yedek kaynağına düşerek) DNS
+ * doğrulaması gerektirmeden pasif subdomain taraması yapar.
  */
-export async function getSubdomains(domain: string) {
+export async function getSubdomains(domain: string): Promise<SubdomainSearchResult> {
     const res = await fetch(
         `${API_BASE}/api/v1/osint/subdomains/${encodeURIComponent(domain)}`,
         { cache: "no-store" }
@@ -213,5 +219,29 @@ export async function getSubdomains(domain: string) {
         const body = await res.json().catch(() => null);
         throw new Error(body?.detail || "Subdomain taraması sırasında hata oluştu.");
     }
+    return res.json();
+}
+
+/**
+ * Verilen subdomain listesi için canlılık kontrolü yapar (HEAD/GET,
+ * https öncelikli, http fallback — bkz. services/liveness_service.py).
+ * Ayrı bir adımdır: keşif sonucu geldikten sonra kullanıcı isterse
+ * tetikler, yüzlerce subdomain çıkan domainlerde ilk yanıtı yavaşlatmaz.
+ */
+export async function checkSubdomainsAlive(
+    subdomains: string[]
+): Promise<SubdomainLivenessResponse> {
+    const res = await fetch(`${API_BASE}/api/v1/osint/subdomains/check-alive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subdomains }),
+        cache: "no-store",
+    });
+
+    if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.detail || "Canlılık kontrolü sırasında hata oluştu.");
+    }
+
     return res.json();
 }

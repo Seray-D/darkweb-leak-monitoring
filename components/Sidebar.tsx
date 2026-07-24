@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X, LayoutDashboard, ShieldCheck, KeyRound, Radar, Radio } from "lucide-react";
+
+import { Menu, X, LayoutDashboard, ShieldCheck, KeyRound, Radar, Radio, Search } from "lucide-react";
 
 interface NavItem {
     href: string;
@@ -30,6 +31,12 @@ const NAV_ITEMS: NavItem[] = [
         label: "Varlık Yönetimi",
         description: "İzlenen domain ve e-postalar",
         icon: ShieldCheck,
+    },
+    {
+        href: "/subdomains",
+        label: "Subdomain Keşfi",
+        description: "Pasif CT log tabanlı alt alan adı taraması",
+        icon: Search,
     },
     {
         href: "/tools/password-checker",

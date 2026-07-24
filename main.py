@@ -37,12 +37,18 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from database import Base, SessionLocal, engine, get_db
 from models import AssetBreachLog, BreachLog, MonitoredAsset
-from schemas import MonitoredAssetCreate, MonitoredAssetOut, NormalizedLeak
+from schemas import (
+    MonitoredAssetCreate,
+    MonitoredAssetOut,
+    NormalizedLeak,
+    SubdomainLivenessRequest,
+)
 from services import (
     breachdirectory_service,
     crtsh_service,
     dns_service,
     leakix_service,
+    liveness_service,
     notification_service,
     otx_service,
     xposed_service,
@@ -185,6 +191,12 @@ async def get_subdomains(domain: str):
         "count": len(result.subdomains),
         "subdomains": result.subdomains,
     }
+
+
+@app.post("/api/v1/osint/subdomains/check-alive")
+async def check_subdomains_liveness(payload: SubdomainLivenessRequest):
+    """Bulunan subdomain listesinin canlılık (HTTP/HTTPS) durumunu kontrol eder."""
+    return await liveness_service.check_liveness(payload.subdomains)
 
 
 # Dedup anahtarı: (asset, email_leak, leak_type, raw_source, discovery_date)
@@ -521,7 +533,6 @@ async def _gather_leaks_for_asset(asset: MonitoredAsset) -> List[NormalizedLeak]
     tasks = []
     task_metadata = []
 
-    # DÜZELTME: LeakIX için target veya domain değerini doğrudan koşulsuz gönderiyoruz
     leakix_target = domain if domain else target
     if leakix_target:
         tasks.append(_tracked(leakix_service.search_leakix(leakix_target), "LeakIX", leakix_target))
@@ -676,7 +687,6 @@ async def scan(target: str, db: Session = Depends(get_db)):
     tasks = []
     task_metadata = []
 
-    # DÜZELTME: LeakIX için cleaned_target veya domain değerini doğrudan koşulsuz gönderiyoruz
     leakix_target = domain if domain else cleaned_target
     if leakix_target:
         tasks.append(_tracked(leakix_service.search_leakix(leakix_target), "LeakIX", leakix_target))

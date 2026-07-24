@@ -108,3 +108,16 @@ class MonitoredAssetOut(BaseModel):
 
     class Config:
         from_attributes = True
+        # schemas.py içine ekle
+
+class SubdomainLivenessRequest(BaseModel):
+    subdomains: List[str]
+
+
+class SubdomainLivenessItem(BaseModel):
+    subdomain: str
+    alive: bool
+    scheme: str | None = None
+    status_code: int | None = None
+    response_time_ms: int | None = None
+    error: str | None = None
