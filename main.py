@@ -170,11 +170,6 @@ async def get_subdomains(domain: str):
     try:
         result = await crtsh_service.search_subdomains(cleaned_domain)
     except crtsh_service.SubdomainLookupError as exc:
-        # ÖNEMLİ: Bu blok artık yalnızca HEM crt.sh HEM DE yedek kaynak
-        # (HackerTarget) aynı anda başarısız olduğunda tetiklenir — tekil
-        # crt.sh kesintileri kullanıcıya hiç yansımadan otomatik olarak
-        # yedeğe düşer. Buraya düşülmesi gerçek bir servis kesintisi demektir,
-        # bu yüzden artık sessizce "0 sonuç" DÖNMÜYORUZ.
         logger.error("Subdomain sorgusu başarısız oldu (domain=%s): %s", cleaned_domain, exc)
         raise HTTPException(
             status_code=503,
@@ -186,7 +181,7 @@ async def get_subdomains(domain: str):
 
     return {
         "domain": cleaned_domain,
-        "source": result.source,  # "crt.sh" veya "hackertarget" — hangisi başarılı olduysa
+        "source": result.source,  # "crt.sh" veya "hackertarget"
         "count": len(result.subdomains),
         "subdomains": result.subdomains,
     }
@@ -225,7 +220,6 @@ def _extract_domain(raw: str) -> str:
 
     value = re.sub(r"^www\.", "", value, flags=re.IGNORECASE)
 
-    # Path / query / port kısmını at
     value = value.split("/")[0].split("?")[0].split(":")[0]
 
     return value.strip().strip(".").lower()
@@ -383,13 +377,7 @@ def delete_monitored_asset(asset_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/v1/assets/{asset_id}/verify")
 async def verify_monitored_asset(asset_id: int, db: Session = Depends(get_db)):
-    """
-    Domain Sahiplik Doğrulaması (DNS TXT Verification).
-
-    İzlenen bir 'domain' tipi varlığın gerçek sahibi olunduğunu, domain'in
-    DNS TXT kayıtlarına `leak-monitor-verify=<verification_token>` eklenip
-    eklenmediğini kontrol ederek doğrular.
-    """
+    """Domain Sahiplik Doğrulaması (DNS TXT Verification)."""
     asset = db.query(MonitoredAsset).filter(MonitoredAsset.id == asset_id).first()
     if not asset:
         raise HTTPException(status_code=404, detail="İzlenen varlık bulunamadı.")
@@ -413,11 +401,6 @@ async def verify_monitored_asset(asset_id: int, db: Session = Depends(get_db)):
     )
 
     if not is_valid:
-        logger.warning(
-            "[Domain Verify] Doğrulama başarısız: id=%s, target='%s'",
-            asset.id,
-            asset.target,
-        )
         raise HTTPException(
             status_code=400,
             detail=(
@@ -431,12 +414,6 @@ async def verify_monitored_asset(asset_id: int, db: Session = Depends(get_db)):
     asset.is_verified = True
     db.commit()
     db.refresh(asset)
-
-    logger.info(
-        "[Domain Verify] Doğrulama başarılı: id=%s, target='%s'",
-        asset.id,
-        asset.target,
-    )
 
     return {
         "detail": "Domain başarıyla doğrulandı.",
@@ -469,10 +446,6 @@ async def check_password(prefix: str):
         ) from exc
 
     if resp.status_code != 200:
-        logger.warning(
-            "HIBP Pwned Passwords beklenmeyen durum kodu döndürdü: %s",
-            resp.status_code,
-        )
         raise HTTPException(
             status_code=502, detail=f"HIBP servisi hata döndü ({resp.status_code})."
         )
@@ -522,8 +495,6 @@ async def _tracked(coro, service_name: str, target_label: str):
 async def _gather_leaks_for_asset(asset: MonitoredAsset) -> List[NormalizedLeak]:
     """
     MonitoredAsset.asset_type'a göre uygun servisleri paralel çağırır.
-    /api/v1/scan endpoint'i ile BİREBİR AYNI mantıkte (domain için kurumsal 
-    e-posta kalıpları dahil) sorgulama yapar.
     """
     target = asset.target
     all_results: List[NormalizedLeak] = []
@@ -550,10 +521,13 @@ async def _gather_leaks_for_asset(asset: MonitoredAsset) -> List[NormalizedLeak]
     tasks = []
     task_metadata = []
 
-    if domain and not is_email:
-        tasks.append(_tracked(leakix_service.search_leakix(domain), "LeakIX", domain))
+    # DÜZELTME: LeakIX için target veya domain değerini doğrudan koşulsuz gönderiyoruz
+    leakix_target = domain if domain else target
+    if leakix_target:
+        tasks.append(_tracked(leakix_service.search_leakix(leakix_target), "LeakIX", leakix_target))
         task_metadata.append({"type": "leakix"})
 
+    if domain and not is_email:
         tasks.append(_tracked(otx_service.search_otx(domain, ""), "AlienVault OTX", domain))
         task_metadata.append({"type": "otx_domain"})
 
@@ -607,10 +581,6 @@ async def _gather_leaks_for_asset(asset: MonitoredAsset) -> List[NormalizedLeak]
 def _persist_asset_leaks(
     asset: MonitoredAsset, leaks: List[NormalizedLeak], db: Session
 ) -> int:
-    """
-    NormalizedLeak listesini AssetBreachLog tablosuna birebir tüm detay alanlarıyla yazar.
-    /api/v1/scan ile aynı sayıda ve kalitede kayıt üretilmesini sağlar.
-    """
     db.query(AssetBreachLog).filter(
         AssetBreachLog.asset_id == asset.id
     ).delete(synchronize_session=False)
@@ -665,15 +635,7 @@ async def _safe_xposed_check(email: str) -> list:
 
 @app.get("/api/v1/scan")
 async def scan(target: str, db: Session = Depends(get_db)):
-    """
-    Verilen hedef (e-posta veya domain) için canlı tarama yapar.
-    
-    1) Veritabanındaki tüm eski sızıntı kayıtlarını temizler.
-    2) Target e-posta ise doğrudan, domain ise varsayılan kurumsal e-postalarla birlikte 
-       LeakIX, OTX, XposedOrNot ve BreachDirectory servislerini eşzamanlı (paralel) sorgular.
-    3) Sonuçları ortak NormalizedLeak formatında toplar ve mükerrer kayıtları ayıklar.
-    4) Güncel sonuçları DB'ye yazar ve bildirim servisini tetikler.
-    """
+    """Verilen hedef (e-posta veya domain) için canlı tarama yapar."""
     if not target or not target.strip():
         raise HTTPException(
             status_code=400, detail="Geçerli bir e-posta veya domain girin."
@@ -714,10 +676,13 @@ async def scan(target: str, db: Session = Depends(get_db)):
     tasks = []
     task_metadata = []
 
-    if domain:
-        tasks.append(_tracked(leakix_service.search_leakix(domain), "LeakIX", domain))
+    # DÜZELTME: LeakIX için cleaned_target veya domain değerini doğrudan koşulsuz gönderiyoruz
+    leakix_target = domain if domain else cleaned_target
+    if leakix_target:
+        tasks.append(_tracked(leakix_service.search_leakix(leakix_target), "LeakIX", leakix_target))
         task_metadata.append({"type": "leakix"})
 
+    if domain:
         tasks.append(_tracked(otx_service.search_otx(domain, ""), "AlienVault OTX", domain))
         task_metadata.append({"type": "otx_domain"})
 
