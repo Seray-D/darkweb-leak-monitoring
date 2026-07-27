@@ -48,7 +48,6 @@ const COLUMNS = [
 ];
 
 const PART_SEPARATOR = " • ";
-// Add this helper function at the top level of your component file, e.g., right under splitLeakType or near your utility functions.
 
 function getPriorityColor(priority: string): string {
     switch (priority?.toLowerCase()) {
@@ -83,10 +82,6 @@ function splitLeakType(leakType: string): { title: string; subtitle: string | nu
     };
 }
 
-// Backend (xposed_adapter.py), gerçek bir kaynak linki olmayan sızıntılar
-// için (ör. XposedOrNot) otomatik olarak bir DuckDuckGo arama linki üretir.
-// Burada bu durumu ayırt edip kullanıcıya farklı bir etiket gösteriyoruz,
-// böylece "gerçek indirme linki" ile "araştırma önerisi" karışmıyor.
 function isDuckDuckGoFallbackUrl(url: string): boolean {
     return url.includes("duckduckgo.com");
 }
@@ -118,11 +113,10 @@ function UrlDetailRow({ url }: { url: string }) {
                 href={trimmed}
                 target="_blank"
                 rel="noopener noreferrer"
-                className={`flex items-center gap-1 text-right hover:underline ${
-                    isFallback
+                className={`flex items-center gap-1 text-right hover:underline ${isFallback
                         ? "text-amber-400 hover:text-amber-300"
                         : "text-cyan-400 hover:text-cyan-300"
-                }`}
+                    }`}
             >
                 {isFallback ? "Web'de Ara (DuckDuckGo)" : "Kaynağı Görüntüle"}
                 <ExternalLink size={12} />
@@ -163,14 +157,10 @@ export default function LeakTable({
     const [priority, setPriority] = useState<string>(PRIORITY_OPTIONS[0]);
     const [market, setMarket] = useState<string>(marketFilter ?? MARKET_OPTIONS[0]);
 
-    // page.tsx tarafından dışarıdan (kontrollü) bir marketFilter güncellemesi
-    // yapılırsa (örn. global "filtreleri temizle" veya URL senkronizasyonu),
-    // iç state'i onunla senkron tut.
     useEffect(() => {
         if (marketFilter !== undefined && marketFilter !== market) {
             setMarket(marketFilter);
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [marketFilter]);
 
     const handleMarketChange = (value: string) => {
@@ -688,8 +678,8 @@ function DetailRow({
                 {icon}
                 {label}
             </div>
-            <div className={`text-right text-slate-200 ${mono ? "font-mono" : ""}`}>
-                {value || "-"}
+            <div className={`text-right text-slate-200 ${mono ? "font-mono text-xs" : ""}`}>
+                {value}
             </div>
         </div>
     );

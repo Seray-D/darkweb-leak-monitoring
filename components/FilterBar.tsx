@@ -1,5 +1,4 @@
 "use client";
-
 import {
     Search,
     ListFilter,
@@ -14,7 +13,7 @@ import { exportToCSV, exportToPDF } from "@/lib/exportUtils";
 
 export const STATUS_OPTIONS = ["Tüm Durumlar", ...STATUS_VALUES] as const;
 export const PRIORITY_OPTIONS = ["Tüm Öncelikler", ...PRIORITY_VALUES] as const;
-export const MARKET_OPTIONS = ["Tüm Marketler", "XposedOrNot", "LeakIX", "OTX", "BreachDirectory"] as const;
+export const MARKET_OPTIONS = ["Tüm Marketler", "XposedOrNot", "LeakIX", "AlienVault OTX", "BreachDirectory"] as const;
 
 interface FilterBarProps {
     search: string;
@@ -23,8 +22,8 @@ interface FilterBarProps {
     onStatusChange: (value: string) => void;
     priority: string;
     onPriorityChange: (value: string) => void;
-    market?: string;                 // Opsiyonel yapıldı
-    onMarketChange?: (value: string) => void; // Opsiyonel yapıldı
+    market?: string;
+    onMarketChange?: (value: string) => void;
     resultCount: number;
     totalCount: number;
     filteredLeaks: Leak[];
@@ -47,17 +46,19 @@ export default function FilterBar({
     onStatusChange,
     priority,
     onPriorityChange,
-    market = MARKET_OPTIONS[0],
+    market,
     onMarketChange,
     resultCount,
     totalCount,
     filteredLeaks,
 }: FilterBarProps) {
+    const currentMarket = market && MARKET_OPTIONS.includes(market as any) ? market : MARKET_OPTIONS[0];
+
     const hasActiveFilters =
         search.trim() !== "" ||
         status !== STATUS_OPTIONS[0] ||
         priority !== PRIORITY_OPTIONS[0] ||
-        market !== MARKET_OPTIONS[0];
+        currentMarket !== MARKET_OPTIONS[0];
 
     const clearFilters = () => {
         onSearchChange("");
@@ -151,7 +152,7 @@ export default function FilterBar({
                             className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
                         />
                         <select
-                            value={market}
+                            value={currentMarket}
                             onChange={(e) => onMarketChange && onMarketChange(e.target.value)}
                             className={selectClasses}
                         >

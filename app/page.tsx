@@ -102,14 +102,11 @@ export default function Home() {
         resetOnMount();
     }, [resetOnMount]);
 
-    // Header veya başka yerden tetiklenen tarama işlemi
+    // Header veya başka yerden tetiklenen arama işlemi
     const handleScan = async (email: string) => {
         const cleanedTarget = email.trim();
         if (!cleanedTarget) return;
 
-        // "@" içermeyen girdiler backend tarafında zaten domain olarak işleniyor
-        // (bkz. main.py -> scan() -> is_email = "@" in target). Aynı kontrolü
-        // burada da yapıp, bir e-posta ile bir kök domain'i ayırt ediyoruz.
         const looksLikeDomain = !cleanedTarget.includes("@");
 
         setScanning(true);
@@ -120,11 +117,8 @@ export default function Home() {
         // Yeni arama başlar başlamaz sonuçları sıfırla
         setLeaks([]);
 
-        // Domain girildiyse ÖNCE İzlenen Varlıklar (Monitored Assets) tablomuzda
-        // bu domain'e bağlı kayıtlı bir varlık var mı diye bakıyoruz
-        // (Kurumsal Domain Raporu ile aynı /api/v1/assets/domain-report/{domain}
-        // endpoint'i). Eşleşme varsa kullanıcıyı doğrudan o gruplu rapora
-        // yönlendiriyoruz; yeni bir anlık tarama başlatmıyoruz.
+        // 1. ADIM: Eğer bir domain aratıldıysa, ÖNCE Varlık Yönetimi listemizde
+        // bu domain ile tam eşleşen veya bu domaine kayıtlı varlıklar var mı diye bakıyoruz.
         if (looksLikeDomain) {
             try {
                 const report = await getDomainAssetReport(cleanedTarget);
@@ -137,31 +131,31 @@ export default function Home() {
                     return;
                 }
             } catch (err) {
-                // Domain raporu kontrolü başarısız olsa bile kullanıcının anlık
-                // taramasını engellemeyelim; sessizce normal akışa devam edip
-                // aşağıdaki scanEmail() çağrısına düşüyoruz.
                 console.error("Domain varlık raporu kontrolü başarısız:", err);
             }
         }
 
+        // 2. ADIM: Kayıtlı varlıklarda bulunamadıysa, dışarıdan otomatik/genişletilmiş 
+        // alt domain veya LeakIX port taraması ÇALIŞTIRILMAZ. Sadece doğrudan 
+        // girilen hedef (tam eşleşme) aranır.
         try {
             const result = await scanEmail(cleanedTarget);
 
             if (!result || result.length === 0) {
                 setInfoMessage(
-                    `"${cleanedTarget}" adresi için kamuya açık veritabanlarında sızıntı bulunamadı (Temiz).`
+                    `"${cleanedTarget}" hedefi için veritabanında sızıntı kaydı bulunamadı.`
                 );
                 setLeaks([]);
             } else {
                 setInfoMessage(
-                    `"${cleanedTarget}" için ${result.length} adet sızıntı kaydı tespit edildi!`
+                    `"${cleanedTarget}" için ${result.length} adet sızıntı kaydı tespit edildi.`
                 );
                 setLeaks(result);
             }
         } catch (err) {
             console.error("Scan hatası:", err);
             setError(
-                err instanceof Error ? err.message : "Tarama sırasında hata oluştu."
+                err instanceof Error ? err.message : "Arama sırasında hata oluştu."
             );
             setLeaks([]);
         } finally {
@@ -169,13 +163,10 @@ export default function Home() {
         }
     };
 
-    // Tablo içindeki durum güncellemeleri veya tablo içi aramalar 
-    // yapıldığında StatsCards'ı güncellemek için callback
     const handleLeaksUpdate = (updatedLeaks: Leak[]) => {
         setLeaks(updatedLeaks);
     };
 
-    // En son aratılan hedefi (currentTarget) izleme listesine ekler ve anında tarar
     const handleAddToMonitoring = async () => {
         if (!currentTarget) return;
 
@@ -183,11 +174,9 @@ export default function Home() {
         setError(null);
         try {
             const cleanTarget = currentTarget.trim();
-            // 1. Varlığı izlemeye ekle
             const newAsset = await addMonitoredAsset(cleanTarget);
-            setInfoMessage(`"${cleanTarget}" izleme listesine eklendi. Sızıntılar taranıyor...`);
+            setInfoMessage(`"${cleanTarget}" izleme listesine eklendi.`);
 
-            // 2. Anında ilk taramasını başlat ki sızıntı sayısı 0 kalmasın
             const updated = await rescanMonitoredAsset(newAsset.id);
 
             if (showMonitored) {
@@ -200,7 +189,7 @@ export default function Home() {
                 setLeaks(mapBreachLogsToLeaks(updated.breach_logs));
             }
 
-            setInfoMessage(`"${cleanTarget}" izlemeye eklendi ve sızıntı geçmişi güncellendi.`);
+            setInfoMessage(`"${cleanTarget}" izlemeye eklendi ve güncellendi.`);
         } catch (err) {
             setError(
                 err instanceof Error ? err.message : "İzlemeye eklenirken hata oluştu."
@@ -263,7 +252,6 @@ export default function Home() {
         }
     };
 
-    // "Doğrula" butonu: DNS TXT kaydını backend'e doğrulatır.
     const handleVerifyMonitored = async (id: number) => {
         setVerifyingId(id);
         setMonitoredError(null);
@@ -287,14 +275,13 @@ export default function Home() {
         }
     };
 
-    // TXT kaydı metnini panoya kopyalar ve kısa süreliğine geri bildirim gösterir.
     const handleCopyToken = async (assetId: number, token: string) => {
         try {
             await navigator.clipboard.writeText(`leak-monitor-verify=${token}`);
             setCopiedAssetId(assetId);
             setTimeout(() => setCopiedAssetId((prev) => (prev === assetId ? null : prev)), 2000);
         } catch (err) {
-            setMonitoredError("Panoya kopyalanamadı, lütfen manuel seçip kopyalayın.");
+            setMonitoredError("Panoya kopyalanamadı.");
         }
     };
 
@@ -308,7 +295,6 @@ export default function Home() {
             />
 
             <div className="mx-auto max-w-7xl px-6 py-8 space-y-6">
-                {/* Araç Çubuğu: İzlenen Varlıklar / İzlemeye Ekle / Parola Testi Linki */}
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-4">
                         <button
@@ -336,13 +322,12 @@ export default function Home() {
                         >
                             <ShieldPlus size={15} />
                             {addingToMonitoring
-                                ? "Ekleniyor & Taranıyor..."
+                                ? "Ekleniyor..."
                                 : `"${currentTarget}" için İzlemeye Ekle`}
                         </button>
                     )}
                 </div>
 
-                {/* İzlenen Varlıklar Paneli */}
                 {showMonitored && (
                     <div className="rounded-lg border border-slate-700/50 bg-slate-900/40 p-4 space-y-3">
                         <h2 className="text-sm font-semibold text-slate-200">
@@ -357,8 +342,7 @@ export default function Home() {
                             <p className="text-sm text-slate-400">Yükleniyor...</p>
                         ) : monitoredAssets.length === 0 ? (
                             <p className="text-sm text-slate-400">
-                                Henüz izlenen bir varlık yok. Arama yaptıktan sonra
-                                &quot;İzlemeye Ekle&quot; butonuyla ekleyebilirsiniz.
+                                Henüz izlenen bir varlık yok.
                             </p>
                         ) : (
                             <ul className="divide-y divide-slate-800">
@@ -387,7 +371,7 @@ export default function Home() {
                                                             onClick={() => handleVerifyMonitored(asset.id)}
                                                             disabled={verifyingId === asset.id}
                                                             aria-label={`${asset.target} domainini doğrula`}
-                                                            className="flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            className="flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 disabled:opacity-50"
                                                         >
                                                             <ShieldCheck
                                                                 size={13}
@@ -400,7 +384,7 @@ export default function Home() {
                                                         onClick={() => handleRescanMonitored(asset.id)}
                                                         disabled={rescanningId === asset.id}
                                                         aria-label={`${asset.target} için şimdi tara`}
-                                                        className="flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                        className="flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 disabled:opacity-50"
                                                     >
                                                         <RefreshCw size={13} className={rescanningId === asset.id ? "animate-spin" : ""} />
                                                         {rescanningId === asset.id ? "Taranıyor..." : "Şimdi Tara"}
@@ -423,7 +407,7 @@ export default function Home() {
                                                     </code>
                                                     <button
                                                         onClick={() => handleCopyToken(asset.id, asset.verification_token)}
-                                                        aria-label={`${asset.target} için TXT kaydını kopyala`}
+                                                        aria-label="Kopyala"
                                                         className="flex shrink-0 items-center gap-1 text-xs text-amber-300 hover:text-amber-200"
                                                     >
                                                         <Copy size={12} />
@@ -439,13 +423,11 @@ export default function Home() {
                     </div>
                 )}
 
-                {/* Pasif Subdomain Keşfi (crt.sh) */}
+                {/* Subdomain Scanner bileşeni bağımsız çalışmaya devam eder */}
                 <SubdomainScanner />
 
-                {/* İstatistik Kartları */}
                 <StatsCards leaks={leaks} />
 
-                {/* Hata Mesajı Kutusu */}
                 {error && (
                     <div className="flex items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
                         <div className="flex items-center gap-2">
@@ -458,7 +440,6 @@ export default function Home() {
                     </div>
                 )}
 
-                {/* Bilgi / Başarı Mesajı Kutusu */}
                 {infoMessage && (
                     <div className="flex items-center justify-between gap-3 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-300">
                         <div className="flex items-center gap-2">
@@ -471,7 +452,6 @@ export default function Home() {
                     </div>
                 )}
 
-                {/* Filtreli Tablo */}
                 <LeakTable
                     leaks={leaks}
                     loading={loading || scanning}

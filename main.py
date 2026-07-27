@@ -518,10 +518,6 @@ def get_domain_asset_report(domain: str, db: Session = Depends(get_db)):
     if not cleaned_domain:
         raise HTTPException(status_code=400, detail="Geçerli bir domain girin.")
 
-    # Not: basit '%domain%' substring araması "gizmir.bel.tr" gibi yanlış
-    # pozitiflere yol açabileceği için, sınırları netleştirilmiş 3 desen
-    # kullanıyoruz: tam eşleşme, "@domain" ile biten (e-posta), ".domain"
-    # ile biten (alt domain).
     email_suffix_pattern = f"%@{cleaned_domain}"
     subdomain_suffix_pattern = f"%.{cleaned_domain}"
 
@@ -700,7 +696,7 @@ async def _gather_leaks_for_asset(asset: MonitoredAsset) -> List[NormalizedLeak]
     task_metadata = []
 
     leakix_target = domain if domain else target
-    if leakix_target:
+    if leakix_target and not is_email:
         tasks.append(_tracked(leakix_service.search_leakix(leakix_target), "LeakIX", leakix_target))
         task_metadata.append({"type": "leakix"})
 
@@ -854,11 +850,11 @@ async def scan(target: str, db: Session = Depends(get_db)):
     task_metadata = []
 
     leakix_target = domain if domain else cleaned_target
-    if leakix_target:
+    if leakix_target and not is_email:
         tasks.append(_tracked(leakix_service.search_leakix(leakix_target), "LeakIX", leakix_target))
         task_metadata.append({"type": "leakix"})
 
-    if domain:
+    if domain and not is_email:
         tasks.append(_tracked(otx_service.search_otx(domain, ""), "AlienVault OTX", domain))
         task_metadata.append({"type": "otx_domain"})
 
