@@ -12,9 +12,7 @@ sadece loglanır.
 
 import logging
 from typing import Iterable, Protocol
-
 import httpx
-
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -119,3 +117,27 @@ async def send_leak_alert(new_leaks: Iterable[LeakLike]) -> None:
         await _send_slack(message)
     except Exception:  # noqa: BLE001 - bildirim hatası taramayı bozmamalı
         logger.exception("Slack bildirimi gönderilirken beklenmeyen hata oluştu.")
+
+
+async def send_telegram_alert(alert_data: dict) -> None:
+    """
+    Tekil veya özel olaylar (Subdomain keşfi, DNS doğrulaması, Event Bus uyarıları vb.)
+    için doğrudan esnek Telegram bildirimi göndermeyi sağlayan yardımcı fonksiyon.
+    """
+    if not (settings.telegram_bot_token and settings.telegram_chat_id):
+        return
+
+    asset = alert_data.get("asset", "Bilinmeyen Varlık")
+    market = alert_data.get("market", "Güvenlik Uyarısı")
+    priority = alert_data.get("priority", "Medium")
+    leak_type = alert_data.get("leak_type", "Genel Olay")
+
+    message = (
+        f"🛡️ *Dark Web / CTI Güvenlik Bildirimi*\n\n"
+        f"• *Varlık / Hedef:* `{asset}`\n"
+        f"• *Kaynak / Modül:* {market}\n"
+        f"• *Kategori / Tip:* {leak_type}\n"
+        f"• *Öncelik Seviyesi:* *{priority}*"
+    )
+
+    await _send_telegram(message)

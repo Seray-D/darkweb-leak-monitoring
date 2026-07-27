@@ -30,3 +30,6 @@ dist/
 *.user
 *.userossc
 .vs/
+
+# Telegram Logları / Servis Dosyaları 
+services/telegram_service.py

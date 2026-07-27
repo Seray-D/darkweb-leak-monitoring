@@ -13,16 +13,17 @@ endpoint'te gerçekleştirilir.
 """
 
 import logging
-
 import dns.asyncresolver
 import dns.exception
 import dns.resolver
+
+# Telegram servisi entegrasyonu
+from services.telegram_service import send_telegram_alert
 
 logger = logging.getLogger(__name__)
 
 TXT_RECORD_PREFIX = "leak-monitor-verify="
 DNS_LOOKUP_TIMEOUT_SECONDS = 10.0
-
 
 def _normalize_txt_value(raw_value: str) -> str:
     """
@@ -39,7 +40,6 @@ def _normalize_txt_value(raw_value: str) -> str:
     cleaned = cleaned.strip().replace(" ", "")
     return cleaned.lower()
 
-
 def _decode_txt_rdata(rdata) -> str:
     """
     dnspython TXT rdata'sı, uzun değerlerde birden fazla string parçasına
@@ -53,7 +53,6 @@ def _decode_txt_rdata(rdata) -> str:
         else:
             parts.append(str(chunk))
     return "".join(parts)
-
 
 async def verify_domain_txt(domain: str, expected_token: str) -> bool:
     """
@@ -104,6 +103,18 @@ async def verify_domain_txt(domain: str, expected_token: str) -> bool:
         combined_value = _decode_txt_rdata(rdata)
         if _normalize_txt_value(combined_value) == expected_normalized:
             logger.info("[DNS Verify] Doğrulama başarılı: %s", cleaned_domain)
+            
+            # Domain sahipliği başarılıyla doğrulandığında Telegram bildirimi tetikle
+            try:
+                await send_telegram_alert({
+                    "asset": cleaned_domain,
+                    "market": "DNS TXT Doğrulaması",
+                    "priority": "High",
+                    "leak_type": "Domain Ownership Verified"
+                })
+            except Exception as tg_err:
+                logger.error(f"Telegram bildirim hatası: {tg_err}")
+
             return True
 
     logger.info(

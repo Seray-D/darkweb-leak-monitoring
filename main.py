@@ -58,6 +58,8 @@ from services import (
 from services.xposed_adapter import normalize_xposed_results
 from services.otx_service import search_otx
 from services.event_bus import live_feed_bus, event_stream
+from services.telegram_service import send_telegram_alert
+from datetime import date, datetime, timedelta
 
 load_dotenv()
 
@@ -754,6 +756,60 @@ async def _gather_leaks_for_asset(asset: MonitoredAsset) -> List[NormalizedLeak]
 def _persist_asset_leaks(
     asset: MonitoredAsset, leaks: List[NormalizedLeak], db: Session
 ) -> int:
+    """
+    Mevcut asset'e ait sızıntıları işler. Yalnızca:
+    1) Veritabanında daha önce olmayan, VE
+    2) 'Last Seen' tarihi KESİNLİKLE BUGÜN olan 
+       gerçekten güncel kayıtlar için Telegram bildirimi tetikler.
+    """
+    existing_logs = db.query(AssetBreachLog).filter(
+        AssetBreachLog.asset_id == asset.id
+    ).all()
+
+    existing_keys = {
+        _dedup_key(
+            log.asset,
+            log.email_leak,
+            log.leak_type,
+            log.raw_source,
+            str(log.last_seen or "")
+        )
+        for log in existing_logs
+    }
+
+    # Bugünün tarihi (Sistem tarihi baz alınır)
+    today = date.today() # 2026-07-27
+    
+    truly_new_and_recent_items = []
+    for item in leaks:
+        item_key = _dedup_key(
+            item.asset,
+            item.email_leak,
+            item.leak_type,
+            item.raw_source,
+            str(item.last_seen or "")
+        )
+        
+        # 1. Kriter: Veritabanında daha önce olmamalı
+        if item_key not in existing_keys:
+            
+            # 2. Kriter: 'Last Seen' Tarihi kontrolü (Sadece bugünün tarihiyse kabul et)
+            is_today = False
+            raw_date_str = str(item.last_seen or "").strip()
+            
+            if raw_date_str:
+                try:
+                    # Tarih formatını parse et (YYYY-MM-DD)
+                    parsed_date = datetime.strptime(raw_date_str[:10], "%Y-%m-%d").date()
+                    if parsed_date == today:
+                        is_today = True
+                except ValueError:
+                    is_today = False
+            
+            if is_today:
+                truly_new_and_recent_items.append(item)
+
+    # Veritabanını güncelle (Geçmiş tarihli tüm kayıtlar arayüzde görünmeye devam eder)
     db.query(AssetBreachLog).filter(
         AssetBreachLog.asset_id == asset.id
     ).delete(synchronize_session=False)
@@ -789,12 +845,40 @@ def _persist_asset_leaks(
     db.refresh(asset)
 
     logger.info(
-        "[Asset Scan] '%s' için %s güncel kayıt kaydedildi.",
+        "[Asset Scan] '%s' için %s kayıt işlendi. Bugünkü 'Last Seen' tarihli yeni bildirim sayısı: %s",
         asset.target,
         len(new_logs),
+        len(truly_new_and_recent_items),
     )
 
-    return len(new_logs)
+    # SADECE 'LAST SEEN' TARİHİ BUGÜN OLANLAR İÇİN TELEGRAM BİLDİRİMİ GÖNDER
+    if truly_new_and_recent_items:
+        try:
+            new_db_objects = [
+                AssetBreachLog(
+                    asset=item.asset,
+                    email_leak=item.email_leak,
+                    leaked_password=item.leaked_password,
+                    leak_type=item.leak_type,
+                    market=item.market,
+                    last_seen=item.last_seen,
+                    certainty=item.certainty,
+                    status=item.status,
+                    priority=item.priority,
+                    discovery_date=item.discovery_date,
+                    raw_source=item.raw_source or "",
+                    url=item.url or "",
+                )
+                for item in truly_new_and_recent_items
+            ]
+            import asyncio
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(notification_service.send_leak_alert(new_db_objects))
+        except Exception as exc:
+            logger.error("Telegram bildirim hatası: %s", exc)
+
+    return len(truly_new_and_recent_items)
 
 
 async def _scan_and_persist_asset(asset: MonitoredAsset, db: Session) -> int:
@@ -984,7 +1068,7 @@ async def _scheduled_scan_all_assets() -> None:
                 new_count = await _scan_and_persist_asset(asset, db)
                 if new_count:
                     logger.info(
-                        "⏰ [Scheduler] '%s' için %s güncel kayıt.",
+                        "⏰ [Scheduler] '%s' için %s yeni kayıt.",
                         asset.target,
                         new_count,
                     )
@@ -994,7 +1078,7 @@ async def _scheduled_scan_all_assets() -> None:
                 )
     finally:
         db.close()
-    logger.info("⏰ [Scheduler] Tarama tamamlandı.")
+    logger.info("⏰ [Scheduler] Periyodik tarama tamamlandı.")
 
 
 @app.on_event("startup")
@@ -1015,3 +1099,15 @@ async def _start_scheduler() -> None:
 @app.on_event("shutdown")
 async def _stop_scheduler() -> None:
     scheduler.shutdown(wait=False)
+
+@app.get("/test-telegram")
+async def test_telegram():
+    sample_leak = {
+        "asset": "test-kullanici@izmir.bel.tr",
+        "market": "AlienVault OTX",
+        "priority": "Kritik",
+        "leak_type": "Credentials"
+    }
+    
+    result = await send_telegram_alert(sample_leak)
+    return {"status": "Test isteği gönderildi", "telegram_response": result}

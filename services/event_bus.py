@@ -14,6 +14,9 @@ import json
 import time
 from typing import Any, AsyncGenerator, Dict, List
 
+# Telegram servisi entegrasyonu
+from services.telegram_service import send_telegram_alert
+
 
 class LiveFeedBus:
     def __init__(self, max_history: int = 200) -> None:
@@ -39,6 +42,20 @@ class LiveFeedBus:
                 except asyncio.QueueEmpty:
                     pass
             await queue.put(event)
+
+        # Event bus üzerinden önemli/kritik olaylar (özellikle sızıntı/leak bildirimleri) yayınlandığında
+        # otomatik olarak Telegram bildirimi tetikle
+        if "leak" in event_type.lower() or "alert" in event_type.lower() or "critical" in event_type.lower():
+            try:
+                await send_telegram_alert({
+                    "asset": extra.get("asset", message),
+                    "market": f"Event Bus ({event_type})",
+                    "priority": extra.get("priority", "High"),
+                    "leak_type": event_type
+                })
+            except Exception as tg_err:
+                # Event bus içindeki loglama yapısını bozmamak için hatalar sessizce yakalanır
+                pass
 
     async def subscribe(self) -> asyncio.Queue:
         queue: asyncio.Queue = asyncio.Queue(maxsize=100)

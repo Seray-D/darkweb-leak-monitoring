@@ -35,6 +35,9 @@ from typing import List, Optional, Set
 
 import httpx
 
+# Telegram servisi entegrasyonu
+from services.telegram_service import send_telegram_alert
+
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------- #
@@ -159,7 +162,21 @@ async def _search_crtsh_only(domain: str) -> List[str]:
                 response.raise_for_status()
 
                 entries = _parse_crtsh_response(response.text, domain)
-                return _extract_subdomains_from_crtsh(entries, domain)
+                subdomains = _extract_subdomains_from_crtsh(entries, domain)
+
+                # Yeni Subdomain'ler bulunduğunda Telegram bildirimi tetikle
+                if subdomains:
+                    try:
+                        await send_telegram_alert({
+                            "asset": domain,
+                            "market": f"Subdomain Keşfi (crt.sh - {len(subdomains)} adet)",
+                            "priority": "Medium",
+                            "leak_type": "Subdomain Discovery"
+                        })
+                    except Exception as tg_err:
+                        logger.error(f"Telegram bildirim hatası: {tg_err}")
+
+                return subdomains
 
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 last_error = exc
@@ -267,7 +284,21 @@ async def _search_hackertarget(domain: str) -> List[str]:
         if cleaned:
             subdomains.add(cleaned)
 
-    return sorted(subdomains)
+    result_subdomains = sorted(subdomains)
+
+    # HackerTarget üzerinden sonuç bulunduğunda Telegram bildirimi tetikle
+    if result_subdomains:
+        try:
+            await send_telegram_alert({
+                "asset": domain,
+                "market": f"Subdomain Keşfi (HackerTarget - {len(result_subdomains)} adet)",
+                "priority": "Medium",
+                "leak_type": "Subdomain Discovery"
+            })
+        except Exception as tg_err:
+            logger.error(f"Telegram bildirim hatası: {tg_err}")
+
+    return result_subdomains
 
 
 # --------------------------------------------------------------------- #

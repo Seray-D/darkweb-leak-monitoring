@@ -26,6 +26,9 @@ import httpx
 from config import settings
 from schemas import NormalizedLeak
 
+# Telegram servisi entegrasyonu
+from services.telegram_service import send_telegram_alert
+
 logger = logging.getLogger(__name__)
 
 _SEARCH_PATH = "/search"
@@ -379,8 +382,21 @@ async def search_leakix(query: str) -> List[NormalizedLeak]:
             normalized_count = 0
             for entry in data:
                 try:
-                    results.append(_normalize_entry(entry, query))
+                    normalized_leak = _normalize_entry(entry, query)
+                    results.append(normalized_leak)
                     normalized_count += 1
+                    
+                    # LeakIX üzerinden her geçerli sızıntı/açıklık kaydı bulunduğunda otomatik Telegram bildirimi tetikle
+                    try:
+                        await send_telegram_alert({
+                            "asset": normalized_leak.asset,
+                            "market": f"LeakIX ({scope.upper()}) - {normalized_leak.leak_type.split(PART_SEPARATOR)[0]}",
+                            "priority": normalized_leak.priority,
+                            "leak_type": normalized_leak.leak_type
+                        })
+                    except Exception as tg_err:
+                        logger.error(f"Telegram bildirim hatası: {tg_err}")
+
                 except Exception:  # noqa: BLE001 - tek bir bozuk kayıt tüm taramayı düşürmesin
                     severity_debug = (entry.get("leak") or {}).get("severity")
                     logger.exception(

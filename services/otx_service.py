@@ -26,6 +26,9 @@ import httpx
 from config import settings
 from schemas import NormalizedLeak
 
+# Telegram servisi entegrasyonu
+from services.telegram_service import send_telegram_alert
+
 logger = logging.getLogger(__name__)
 
 _DOMAIN_GENERAL_PATH = "/api/v1/indicators/domain/{domain}/general"
@@ -168,6 +171,17 @@ async def search_otx(domain: str, email: str = "") -> List[NormalizedLeak]:
             if unique_display_key not in seen_keys:
                 seen_keys.add(unique_display_key)
                 results.append(normalized)
+
+                # AlienVault OTX üzerinden her yeni tehdit pulse'ı keşfedildiğinde Telegram bildirimi tetikle
+                try:
+                    await send_telegram_alert({
+                        "asset": normalized.asset,
+                        "market": f"AlienVault OTX ({normalized.leak_type.split(PART_SEPARATOR)[0]})",
+                        "priority": normalized.priority,
+                        "leak_type": normalized.leak_type
+                    })
+                except Exception as tg_err:
+                    logger.error(f"Telegram bildirim hatası: {tg_err}")
 
         except Exception:  # noqa: BLE001
             logger.exception("OTX pulse kaydı normalize edilemedi: %s", pulse)

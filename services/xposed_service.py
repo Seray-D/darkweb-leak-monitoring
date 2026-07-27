@@ -165,6 +165,23 @@ async def check_domain_breaches(domain: str) -> list:
                     domain,
                     len(exposed_breaches),
                 )
+                
+                # Organizasyon bazlı yeni domain sızıntısı tespiti durumunda Telegram bildirimi tetikle
+                for eb in exposed_breaches:
+                    try:
+                        import asyncio
+                        breach_title = eb if isinstance(eb, str) else eb.get("breach", "Bilinmeyen Sızıntı")
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            asyncio.create_task(send_telegram_alert({
+                                "asset": domain,
+                                "market": "XposedOrNot (Domain Breach)",
+                                "priority": "High",
+                                "leak_type": f"Organizasyon Sızıntısı • {breach_title}"
+                            }))
+                    except Exception as tg_err:
+                        logger.error(f"Telegram bildirim hatası: {tg_err}")
+
                 return exposed_breaches
 
             elif response.status_code == 404:

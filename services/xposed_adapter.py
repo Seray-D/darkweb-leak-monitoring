@@ -24,8 +24,10 @@ Girdi artık /v1/breach-analytics üzerinden gelen DETAYLI breach dict'leri:
 import logging
 import urllib.parse
 from typing import List
-
 from schemas import NormalizedLeak
+
+# Telegram servisi entegrasyonu
+from services.telegram_service import send_telegram_alert
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +129,25 @@ def normalize_xposed_results(
             )
             continue
         try:
-            normalized.append(normalize_xposed_result(item, email))
+            norm_leak = normalize_xposed_result(item, email)
+            normalized.append(norm_leak)
+
+            # XposedOrNot üzerinden normalize edilip eklenen her yeni sızıntı kaydı için Telegram bildirimi tetikle
+            try:
+                import asyncio
+                # Asenkron fonksiyonu senkron akış içerisinde güvenli şekilde tetiklemek veya arka plana atmak amacıyla:
+                # Modül yapısına uygun olarak send_telegram_alert çağrısı yapılır.
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.create_task(send_telegram_alert({
+                        "asset": norm_leak.asset,
+                        "market": f"XposedOrNot ({norm_leak.email_leak})",
+                        "priority": norm_leak.priority,
+                        "leak_type": norm_leak.leak_type
+                    }))
+            except Exception as tg_err:
+                logger.error(f"Telegram bildirim hatası: {tg_err}")
+
         except Exception:  # noqa: BLE001 - tek bir bozuk kayıt tüm taramayı düşürmesin
             logger.exception("XposedOrNot kaydı normalize edilemedi: %s", item)
 

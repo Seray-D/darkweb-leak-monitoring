@@ -26,8 +26,10 @@ import logging
 import time
 from dataclasses import dataclass
 from typing import List, Optional
-
 import httpx
+
+# Telegram servisi entegrasyonu
+from services.telegram_service import send_telegram_alert
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +91,22 @@ async def check_liveness(subdomains: List[str]) -> List[LivenessResult]:
             _check_single_host(client, semaphore, subdomain)
             for subdomain in unique_subdomains
         ]
-        return await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks)
+
+        # Canlı (alive=True) olarak tespit edilen önemli subdomain/host bulguları için Telegram bildirimi tetikle
+        for res in results:
+            if res.alive:
+                try:
+                    await send_telegram_alert({
+                        "asset": res.subdomain,
+                        "market": f"Subdomain Canlılık Kontrolü ({res.scheme.upper()} - {res.status_code})",
+                        "priority": "Medium",
+                        "leak_type": "Active Subdomain Discovered"
+                    })
+                except Exception as tg_err:
+                    logger.error(f"Telegram bildirim hatası: {tg_err}")
+
+        return results
 
 
 async def _check_single_host(
