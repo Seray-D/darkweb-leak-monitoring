@@ -2,13 +2,22 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AlertTriangle, CheckCircle2, X, RefreshCw, ShieldPlus, ShieldCheck, Trash2, Copy, Lock } from "lucide-react";
 import Header from "@/components/Header";
 import Sidebar from "@/components/Sidebar";
 import LeakTable from "@/components/LeakTable";
 import StatsCards from "@/components/StatsCards";
 import SubdomainScanner from "@/components/SubdomainScanner";
-import { scanEmail, addMonitoredAsset, getMonitoredAssets, deleteMonitoredAsset, rescanMonitoredAsset, verifyMonitoredAsset } from "@/lib/api";
+import {
+    scanEmail,
+    addMonitoredAsset,
+    getMonitoredAssets,
+    deleteMonitoredAsset,
+    rescanMonitoredAsset,
+    verifyMonitoredAsset,
+    getDomainAssetReport,
+} from "@/lib/api";
 import { Leak, MonitoredAsset } from "@/lib/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -41,6 +50,8 @@ function mapBreachLogsToLeaks(logs: any[]): Leak[] {
 }
 
 export default function Home() {
+    const router = useRouter();
+
     const [leaks, setLeaks] = useState<Leak[]>([]);
     const [loading, setLoading] = useState(true);
     const [scanning, setScanning] = useState(false);
@@ -93,25 +104,57 @@ export default function Home() {
 
     // Header veya başka yerden tetiklenen tarama işlemi
     const handleScan = async (email: string) => {
+        const cleanedTarget = email.trim();
+        if (!cleanedTarget) return;
+
+        // "@" içermeyen girdiler backend tarafında zaten domain olarak işleniyor
+        // (bkz. main.py -> scan() -> is_email = "@" in target). Aynı kontrolü
+        // burada da yapıp, bir e-posta ile bir kök domain'i ayırt ediyoruz.
+        const looksLikeDomain = !cleanedTarget.includes("@");
+
         setScanning(true);
         setError(null);
         setInfoMessage(null);
-        setCurrentTarget(email.trim());
+        setCurrentTarget(cleanedTarget);
 
         // Yeni arama başlar başlamaz sonuçları sıfırla
         setLeaks([]);
 
+        // Domain girildiyse ÖNCE İzlenen Varlıklar (Monitored Assets) tablomuzda
+        // bu domain'e bağlı kayıtlı bir varlık var mı diye bakıyoruz
+        // (Kurumsal Domain Raporu ile aynı /api/v1/assets/domain-report/{domain}
+        // endpoint'i). Eşleşme varsa kullanıcıyı doğrudan o gruplu rapora
+        // yönlendiriyoruz; yeni bir anlık tarama başlatmıyoruz.
+        if (looksLikeDomain) {
+            try {
+                const report = await getDomainAssetReport(cleanedTarget);
+                if (report.matched_asset_count > 0) {
+                    setInfoMessage(
+                        `"${cleanedTarget}" izleme listenizde kayıtlı — ${report.matched_asset_count} varlık, ${report.total_leak_count} sızıntı kaydı bulundu. Kurumsal Domain Raporu'na yönlendiriliyorsunuz...`
+                    );
+                    setScanning(false);
+                    router.push(`/domain-report?domain=${encodeURIComponent(cleanedTarget)}`);
+                    return;
+                }
+            } catch (err) {
+                // Domain raporu kontrolü başarısız olsa bile kullanıcının anlık
+                // taramasını engellemeyelim; sessizce normal akışa devam edip
+                // aşağıdaki scanEmail() çağrısına düşüyoruz.
+                console.error("Domain varlık raporu kontrolü başarısız:", err);
+            }
+        }
+
         try {
-            const result = await scanEmail(email);
+            const result = await scanEmail(cleanedTarget);
 
             if (!result || result.length === 0) {
                 setInfoMessage(
-                    `"${email}" adresi için kamuya açık veritabanlarında sızıntı bulunamadı (Temiz).`
+                    `"${cleanedTarget}" adresi için kamuya açık veritabanlarında sızıntı bulunamadı (Temiz).`
                 );
                 setLeaks([]);
             } else {
                 setInfoMessage(
-                    `"${email}" için ${result.length} adet sızıntı kaydı tespit edildi!`
+                    `"${cleanedTarget}" için ${result.length} adet sızıntı kaydı tespit edildi!`
                 );
                 setLeaks(result);
             }

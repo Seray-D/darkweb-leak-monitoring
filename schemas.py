@@ -110,6 +110,59 @@ class MonitoredAssetOut(BaseModel):
         from_attributes = True
         # schemas.py içine ekle
 
+class DomainAccountOut(BaseModel):
+    """
+    /api/v1/domain-accounts/{domain} endpoint'inin döndüğü, bir domain'e
+    ait TÜM hesapları (hem anlık BreachLog hem de kalıcı AssetBreachLog
+    kayıtlarından birleştirilmiş) temsil eden şema.
+
+    `id` iki farklı tablodan geldiği için çakışmayı önlemek adına
+    "adhoc-<id>" / "monitored-<id>" formatında string üretilir;
+    ham veritabanı PK'sı DEĞİLDİR.
+    """
+    id: str
+    asset: str
+    email_leak: Optional[str] = ""
+    leaked_password: Optional[str] = "******"
+    leak_type: str
+    market: str
+    last_seen: Optional[str] = "-"
+    certainty: Optional[str] = "Unsure"
+    status: Optional[str] = "Active"
+    priority: Optional[str] = "Info"
+    discovery_date: str
+    raw_source: Optional[str] = ""
+
+    url: Optional[str] = ""
+    ip_info: Optional[str] = ""
+    hostname: Optional[str] = ""
+    malware_path: Optional[str] = ""
+
+    # Kaydın hangi tablodan geldiğini frontend'de ayırt edebilmek için.
+    source: Literal["adhoc", "monitored"] = "adhoc"
+
+    class Config:
+        from_attributes = True
+
+
+class DomainAssetReportOut(BaseModel):
+    """
+    /api/v1/assets/domain-report/{domain} endpoint'inin döndüğü rapor.
+
+    Girilen kök domain'e (örn. izmir.bel.tr) ait TÜM MonitoredAsset
+    kayıtlarını (o domain'in kendisi + @domain uzantılı e-postalar +
+    *.domain alt domainleri) ve her birinin bağlı AssetBreachLog
+    geçmişini (MonitoredAssetOut.breach_logs üzerinden) grup grup içerir.
+    """
+    domain: str
+    matched_asset_count: int
+    total_leak_count: int
+    assets: List[MonitoredAssetOut]
+
+    class Config:
+        from_attributes = True
+
+
 class SubdomainLivenessRequest(BaseModel):
     subdomains: List[str]
 

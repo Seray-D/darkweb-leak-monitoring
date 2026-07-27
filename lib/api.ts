@@ -5,6 +5,8 @@ import {
     PwnedPasswordResult,
     SubdomainSearchResult,
     SubdomainLivenessResponse,
+    DomainAccount,
+    DomainAssetReport,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
@@ -241,6 +243,46 @@ export async function checkSubdomainsAlive(
     if (!res.ok) {
         const body = await res.json().catch(() => null);
         throw new Error(body?.detail || "Canlılık kontrolü sırasında hata oluştu.");
+    }
+
+    return res.json();
+}
+
+/**
+ * Verilen domain'e ait TÜM sızdırılmış hesapları (anlık + kalıcı izleme
+ * geçmişi birleştirilmiş halde) getirir. Yeni bir tarama TETİKLEMEZ,
+ * yalnızca veritabanındaki mevcut kayıtları sorgular.
+ */
+export async function getDomainAccounts(domain: string): Promise<DomainAccount[]> {
+    const cleaned = domain.trim();
+    const res = await fetch(
+        `${API_BASE}/api/v1/domain-accounts/${encodeURIComponent(cleaned)}`,
+        { cache: "no-store" }
+    );
+
+    if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.detail || `Domain hesapları getirilirken hata oluştu (${res.status})`);
+    }
+
+    return res.json();
+}
+
+/**
+ * Kök domain'e (örn. "izmir.bel.tr") bağlı TÜM izlenen varlıkları
+ * (kendisi + e-postalar + alt domainler) ve her birinin kalıcı sızıntı
+ * geçmişini gruplu şekilde getirir. Yeni bir tarama TETİKLEMEZ.
+ */
+export async function getDomainAssetReport(domain: string): Promise<DomainAssetReport> {
+    const cleaned = domain.trim();
+    const res = await fetch(
+        `${API_BASE}/api/v1/assets/domain-report/${encodeURIComponent(cleaned)}`,
+        { cache: "no-store" }
+    );
+
+    if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.detail || `Domain raporu getirilirken hata oluştu (${res.status})`);
     }
 
     return res.json();

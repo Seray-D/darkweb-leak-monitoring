@@ -1,4 +1,43 @@
-/* ------------------------------------------------------------------ *//* Tek Kaynak (Single Source of Truth) — Certainty / Status / Priority  *//* değer setleri. Önceden FilterBar.tsx (STATUS_OPTIONS/PRIORITY_OPTIONS) *//* ve PasswordCell.tsx (CERTAINTY_OPTIONS/STATUS_OPTIONS_MODAL/          *//* PRIORITY_OPTIONS_MODAL) içinde birbirinden bağımsız, eksik ve         *//* tutarsız olarak tanımlanıyordu (ör. modal'da "Resolved"/"Monitoring"  *//* yoktu, filtre panelinde "Completed"/"In Progress"/"Ignored" yoktu).   *//* Artık HER İKİ bileşen de bu dizileri import ederek kullanıyor; yeni   *//* bir durum eklemek/çıkarmak istendiğinde tek bir yer güncellenir.      *//* ------------------------------------------------------------------ */
+export interface DomainAccount {
+    id: string; // "adhoc-12" veya "monitored-7" formatında
+    asset: string;
+    email_leak: string;
+    leaked_password: string;
+    leak_type: string;
+    market: string;
+    last_seen: string;
+    certainty: string;
+    status: string;
+    priority: string;
+    discovery_date: string;
+    raw_source: string;
+    url: string;
+    ip_info: string;
+    hostname: string;
+    malware_path: string;
+    source: "adhoc" | "monitored";
+}
+
+/* ------------------------------------------------------------------ *
+ * Domain Asset Report — Kurumsal Domain Raporu Modülü için Tip         *
+ * ------------------------------------------------------------------ */
+export interface DomainAssetReport {
+    domain: string;
+    matched_asset_count: number;
+    total_leak_count: number;
+    assets: MonitoredAsset[];
+}
+
+/* ------------------------------------------------------------------ *
+ * Tek Kaynak (Single Source of Truth) — Certainty / Status / Priority  *
+ * değer setleri. Önceden FilterBar.tsx (STATUS_OPTIONS/PRIORITY_OPTIONS) *
+ * ve PasswordCell.tsx (CERTAINTY_OPTIONS/STATUS_OPTIONS_MODAL/          *
+ * PRIORITY_OPTIONS_MODAL) içinde birbirinden bağımsız, eksik ve         *
+ * tutarsız olarak tanımlanıyordu (ör. modal'da "Resolved"/"Monitoring"  *
+ * yoktu, filtre panelinde "Completed"/"In Progress"/"Ignored" yoktu).   *
+ * Artık HER İKİ bileşen de bu dizileri import ederek kullanıyor; yeni   *
+ * bir durum eklemek/çıkarmak istendiğinde tek bir yer güncellenir.      *
+ * ------------------------------------------------------------------ */
 export const CERTAINTY_VALUES = [
     "Unsure",
     "Confirmed",
@@ -68,7 +107,7 @@ export interface Leak {
     url?: string;
     // Stealer log / açık servis taramasından gelen IP adresi bilgisi.
     ip_info?: string;
-    // NOT: hostname ve malware_path artık backend'den DÜZ alanlar olarak
+    // NOT: hostname and malware_path artık backend'den DÜZ alanlar olarak
     // geliyor (bkz. models.py -> BreachLog.hostname / .malware_path).
     // system_info hiçbir zaman backend'den bu iç içe (nested) şekilde
     // gelmediği için PasswordCell.tsx'teki modal her zaman "-" gösteriyordu.
@@ -94,7 +133,11 @@ export type BadgeVariant = "certainty" | "status" | "priority";
 // burada da export ediliyor.
 export type PasswordExposureCategory = "corporate" | "third_party" | "stealer";
 
-/* ------------------------------------------------------------------ *//* HIBP "Pwned Passwords" (k-Anonymity) — Hash Bazlı Parola Sızıntı     *//* Kontrolü modülü için tipler. Bkz. lib/api.ts -> checkPassword()      *//* ve PasswordCell.tsx -> PwnedPasswordChecker.                        *//* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ *
+ * HIBP "Pwned Passwords" (k-Anonymity) — Hash Bazlı Parola Sızıntı     *
+ * Kontrolü modülü için tipler. Bkz. lib/api.ts -> checkPassword()      *
+ * ve PasswordCell.tsx -> PwnedPasswordChecker.                        *
+ * ------------------------------------------------------------------ */
 
 // Backend'in /api/v1/check-password endpoint'inden dönen ham yanıt.
 // (prefix'e uyan tüm suffix:count çiftleri; asıl eşleşme istemcide yapılır.)
@@ -110,7 +153,13 @@ export interface PwnedPasswordResult {
     count: number;
 }
 
-/* ------------------------------------------------------------------ *//* İzlenen Varlıklar (Monitored Assets) modülü.                         *//* NOT: AssetBreachLog, yukarıdaki ad-hoc `Leak` tipiyle KARIŞTIRILMAMALI. *//* `Leak` her taramada sıfırlanan anlık sonuçları, `AssetBreachLog` ise   *//* bir MonitoredAsset'e bağlı KALICI sızıntı geçmişini temsil eder.       *//* Bkz. lib/api.ts -> addMonitoredAsset / getMonitoredAssets.            *//* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ *
+ * İzlenen Varlıklar (Monitored Assets) modülü.                         *
+ * NOT: AssetBreachLog, yukarıdaki ad-hoc `Leak` tipiyle KARIŞTIRILMAMALI. *
+ * `Leak` her taramada sıfırlanan anlık sonuçları, `AssetBreachLog` ise   *
+ * bir MonitoredAsset'e bağlı KALICI sızıntı geçmişini temsil eder.       *
+ * Bkz. lib/api.ts -> addMonitoredAsset / getMonitoredAssets.            *
+ * ------------------------------------------------------------------ */
 
 export type AssetType = "email" | "domain";
 
@@ -136,7 +185,10 @@ export interface MonitoredAsset {
     breach_logs: AssetBreachLog[];
 }
 
-/* ------------------------------------------------------------------ *//* Subdomain Keşfi (crt.sh / HackerTarget) modülü.                      *//* Bkz. lib/api.ts -> getSubdomains / checkSubdomainsAlive.             *//* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ *
+ * Subdomain Keşfi (crt.sh / HackerTarget) modülü.                      *
+ * Bkz. lib/api.ts -> getSubdomains / checkSubdomainsAlive.             *
+ * ------------------------------------------------------------------ */
 
 export type SubdomainSource = "crt.sh" | "hackertarget";
 

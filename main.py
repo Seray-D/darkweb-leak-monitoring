@@ -42,6 +42,8 @@ from schemas import (
     MonitoredAssetOut,
     NormalizedLeak,
     SubdomainLivenessRequest,
+    DomainAccountOut,
+    DomainAssetReportOut,
 )
 from services import (
     breachdirectory_service,
@@ -279,6 +281,117 @@ def search_domain_leaks(domain: str, db: Session = Depends(get_db)):
     return results
 
 
+def _breachlog_to_domain_account(item: BreachLog) -> DomainAccountOut:
+    return DomainAccountOut(
+        id=f"adhoc-{item.id}",
+        asset=item.asset,
+        email_leak=item.email_leak or "",
+        leaked_password=item.leaked_password or "******",
+        leak_type=item.leak_type,
+        market=item.market,
+        last_seen=item.last_seen or "-",
+        certainty=item.certainty or "Unsure",
+        status=item.status or "Active",
+        priority=item.priority or "Info",
+        discovery_date=item.discovery_date,
+        raw_source=item.raw_source or "",
+        url=item.url or "",
+        ip_info=item.ip_info or "",
+        hostname=item.hostname or "",
+        malware_path=item.malware_path or "",
+        source="adhoc",
+    )
+
+
+def _asset_breachlog_to_domain_account(item: AssetBreachLog) -> DomainAccountOut:
+    return DomainAccountOut(
+        id=f"monitored-{item.id}",
+        asset=item.asset,
+        email_leak=item.email_leak or "",
+        leaked_password=item.leaked_password or "******",
+        leak_type=item.leak_type,
+        market=item.market,
+        last_seen=item.last_seen or "-",
+        certainty=item.certainty or "Unsure",
+        status=item.status or "Active",
+        priority=item.priority or "Info",
+        discovery_date=item.discovery_date,
+        raw_source=item.raw_source or "",
+        url=item.url or "",
+        ip_info=item.ip_info or "",
+        hostname=item.hostname or "",
+        malware_path=item.malware_path or "",
+        source="monitored",
+    )
+
+
+@app.get("/api/v1/domain-accounts/{domain}", response_model=List[DomainAccountOut])
+def get_domain_accounts(domain: str, db: Session = Depends(get_db)):
+    """
+    Verilen domain'e ait TÜM sızdırılmış hesapları döner.
+
+    Hem anlık taramalardan gelen (BreachLog, her yeni /scan'de silinir)
+    hem de kalıcı izleme geçmişinden gelen (AssetBreachLog) kayıtları
+    birleştirir, aynı hesabı tekilleştirir ve en yeni sızıntı en üstte
+    olacak şekilde sıralar. Yeni bir tarama TETİKLEMEZ.
+    """
+    cleaned_domain = _extract_domain(domain)
+    if not cleaned_domain:
+        raise HTTPException(status_code=400, detail="Geçerli bir domain girin.")
+
+    like_pattern = f"%{cleaned_domain}%"
+
+    adhoc_rows = (
+        db.query(BreachLog)
+        .filter(
+            or_(
+                BreachLog.asset.ilike(like_pattern),
+                BreachLog.email_leak.ilike(like_pattern),
+            )
+        )
+        .all()
+    )
+
+    monitored_rows = (
+        db.query(AssetBreachLog)
+        .filter(
+            or_(
+                AssetBreachLog.asset.ilike(like_pattern),
+                AssetBreachLog.email_leak.ilike(like_pattern),
+            )
+        )
+        .all()
+    )
+
+    combined = [_breachlog_to_domain_account(r) for r in adhoc_rows] + [
+        _asset_breachlog_to_domain_account(r) for r in monitored_rows
+    ]
+
+    # Aynı hesap hem ad-hoc hem de kalıcı tabloda görünebilir; tekilleştir.
+    seen_keys: set = set()
+    deduped: List[DomainAccountOut] = []
+    for item in combined:
+        key = (
+            item.email_leak.lower().strip(),
+            item.leak_type.lower().strip(),
+            item.raw_source.lower().strip(),
+            str(item.discovery_date or "").strip(),
+        )
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped.append(item)
+
+    deduped.sort(key=lambda x: str(x.discovery_date), reverse=True)
+
+    logger.info(
+        "Domain hesap araması: domain='%s' -> %s adhoc + %s monitored -> %s tekil kayıt.",
+        cleaned_domain, len(adhoc_rows), len(monitored_rows), len(deduped),
+    )
+
+    return deduped
+
+
 @app.delete("/api/v1/leaks/clear")
 def clear_leaks(db: Session = Depends(get_db)):
     """Veritabanındaki tüm sızıntı kayıtlarını temizler."""
@@ -385,6 +498,59 @@ def delete_monitored_asset(asset_id: int, db: Session = Depends(get_db)):
 
     logger.info("İzlemeden kaldırıldı: id=%s, target='%s'", asset_id, asset.target)
     return {"detail": "İzleme listesinden kaldırıldı.", "id": asset_id}
+
+
+@app.get("/api/v1/assets/domain-report/{domain}", response_model=DomainAssetReportOut)
+def get_domain_asset_report(domain: str, db: Session = Depends(get_db)):
+    """
+    Kök domain'i (örn. "izmir.bel.tr") baz alarak izleme listesindeki
+    TÜM ilişkili varlıkları bulur:
+      - domain'in kendisi (örn. "izmir.bel.tr")
+      - o domain'e ait tüm e-postalar (örn. "emrahasal@izmir.bel.tr")
+      - o domain'in tüm alt domainleri (örn. "portal.izmir.bel.tr")
+
+    Her varlığın KENDİ kalıcı sızıntı geçmişini (AssetBreachLog,
+    MonitoredAssetOut.breach_logs ilişkisi üzerinden) dahil ederek
+    tek bir gruplu raporda döner. Yeni bir tarama TETİKLEMEZ — mevcut
+    veritabanı kayıtlarını okur.
+    """
+    cleaned_domain = _extract_domain(domain)
+    if not cleaned_domain:
+        raise HTTPException(status_code=400, detail="Geçerli bir domain girin.")
+
+    # Not: basit '%domain%' substring araması "gizmir.bel.tr" gibi yanlış
+    # pozitiflere yol açabileceği için, sınırları netleştirilmiş 3 desen
+    # kullanıyoruz: tam eşleşme, "@domain" ile biten (e-posta), ".domain"
+    # ile biten (alt domain).
+    email_suffix_pattern = f"%@{cleaned_domain}"
+    subdomain_suffix_pattern = f"%.{cleaned_domain}"
+
+    matched_assets = (
+        db.query(MonitoredAsset)
+        .filter(
+            or_(
+                MonitoredAsset.target == cleaned_domain,
+                MonitoredAsset.target.ilike(email_suffix_pattern),
+                MonitoredAsset.target.ilike(subdomain_suffix_pattern),
+            )
+        )
+        .order_by(MonitoredAsset.id.desc())
+        .all()
+    )
+
+    total_leaks = sum(len(asset.breach_logs) for asset in matched_assets)
+
+    logger.info(
+        "Domain varlık raporu: domain='%s' -> %s eşleşen varlık, %s toplam sızıntı kaydı.",
+        cleaned_domain, len(matched_assets), total_leaks,
+    )
+
+    return DomainAssetReportOut(
+        domain=cleaned_domain,
+        matched_asset_count=len(matched_assets),
+        total_leak_count=total_leaks,
+        assets=matched_assets,
+    )
 
 
 @app.post("/api/v1/assets/{asset_id}/verify")
