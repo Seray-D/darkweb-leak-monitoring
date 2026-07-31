@@ -171,8 +171,9 @@ export interface AssetBreachLog {
     email_leak?: string;
     leaked_password?: string;
     asset?: string;
+    leak_type?: string;
+    market?: string;
 }
-
 export interface MonitoredAsset {
     id: number;
     target: string;
