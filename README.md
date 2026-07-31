@@ -94,15 +94,22 @@ MonitorLeaks.dev/
 
 ## Installation and Setup
 
-### 1. Backend Setup
-Clone the repository, set up your Python environment, and install all required dependencies:
-
+### 1. Clone the Repository
 ```bash
+git clone [https://github.com/Seray-D/darkweb-leak-monitoring.git](https://github.com/Seray-D/darkweb-leak-monitoring.git)
+cd darkweb-leak-monitoring
+
+### 2. Backend Setup
+python -m venv venv
+# On Windows:
+venv\Scripts\activate
+# On macOS/Linux:
+# source venv/bin/activate
+
 pip install -r requirements.txt
 pip install -r requirements-additions.txt
-```
 
-### 2. Environment Variables (.env)
+### 3. Environment Variables (.env)
 Create a `.env` file in the root directory and configure your credentials:
 
 ```env
@@ -115,21 +122,21 @@ OTX_API_KEY=your_key_here
 LEAKIX_API_KEY=your_key_here
 ```
 
-### 3. Seed Database (Optional)
+### 4. Seed Database (Optional)
 Populate your local SQLite database with initial configuration or sample data:
 
 ```bash
 python seed.py
 ```
 
-### 4. Running the Backend Server
+### 5. Running the Backend Server
 Launch the FastAPI application using Uvicorn:
 
 ```bash
 python -m uvicorn main:app --reload
 ```
 
-### 5. Frontend Setup
+### 6. Frontend Setup
 Navigate to your project root, install Node dependencies, and start the development server:
 
 ```bash
