@@ -134,6 +134,7 @@ export interface AssetBreachLog {
     ip_info?: string;
     hostname?: string;
     malware_path?: string;
+    discovery_date?: string; // Eklenen eksik alan
 }
 
 export interface MonitoredAsset {
