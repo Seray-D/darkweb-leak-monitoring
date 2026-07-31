@@ -160,7 +160,6 @@ export interface PwnedPasswordResult {
  * bir MonitoredAsset'e bağlı KALICI sızıntı geçmişini temsil eder.       *
  * Bkz. lib/api.ts -> addMonitoredAsset / getMonitoredAssets.            *
  * ------------------------------------------------------------------ */
-
 export type AssetType = "email" | "domain";
 
 export interface AssetBreachLog {
@@ -169,6 +168,9 @@ export interface AssetBreachLog {
     breach_date?: string | null;
     exposed_data_types: string;
     created_at: string;
+    email_leak?: string;
+    leaked_password?: string;
+    asset?: string;
 }
 
 export interface MonitoredAsset {
@@ -189,7 +191,6 @@ export interface MonitoredAsset {
  * Subdomain Keşfi (crt.sh / HackerTarget) modülü.                      *
  * Bkz. lib/api.ts -> getSubdomains / checkSubdomainsAlive.             *
  * ------------------------------------------------------------------ */
-
 export type SubdomainSource = "crt.sh" | "hackertarget";
 
 export interface SubdomainSearchResult {
