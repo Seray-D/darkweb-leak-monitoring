@@ -16,19 +16,14 @@ export interface DomainAccount {
     hostname: string;
     malware_path: string;
     source: "adhoc" | "monitored";
-}
-
-/* ------------------------------------------------------------------ *
+}/* ------------------------------------------------------------------ *
  * Domain Asset Report — Kurumsal Domain Raporu Modülü için Tip         *
- * ------------------------------------------------------------------ */
-export interface DomainAssetReport {
+ * ------------------------------------------------------------------ */export interface DomainAssetReport {
     domain: string;
     matched_asset_count: number;
     total_leak_count: number;
     assets: MonitoredAsset[];
-}
-
-/* ------------------------------------------------------------------ *
+}/* ------------------------------------------------------------------ *
  * Tek Kaynak (Single Source of Truth) — Certainty / Status / Priority  *
  * değer setleri. Önceden FilterBar.tsx (STATUS_OPTIONS/PRIORITY_OPTIONS) *
  * ve PasswordCell.tsx (CERTAINTY_OPTIONS/STATUS_OPTIONS_MODAL/          *
@@ -37,48 +32,33 @@ export interface DomainAssetReport {
  * yoktu, filtre panelinde "Completed"/"In Progress"/"Ignored" yoktu).   *
  * Artık HER İKİ bileşen de bu dizileri import ederek kullanıyor; yeni   *
  * bir durum eklemek/çıkarmak istendiğinde tek bir yer güncellenir.      *
- * ------------------------------------------------------------------ */
-export const CERTAINTY_VALUES = [
+ * ------------------------------------------------------------------ */export const CERTAINTY_VALUES = [
     "Unsure",
     "Confirmed",
     "Verified",
     "False Positive",
-] as const;
-
-export const STATUS_VALUES = [
+] as const; export const STATUS_VALUES = [
     "Active",
     "In Progress",
     "Monitoring",
     "Resolved",
     "Completed",
     "Ignored",
-] as const;
-
-export const PRIORITY_VALUES = [
+] as const; export const PRIORITY_VALUES = [
     "Info",
     "Low",
     "Medium",
     "High",
     "Critical",
-] as const;
-
-export type CertaintyValue = (typeof CERTAINTY_VALUES)[number];
-export type StatusValue = (typeof STATUS_VALUES)[number];
-export type PriorityValue = (typeof PRIORITY_VALUES)[number];
-
-export interface SystemInfo {
+] as const; export type CertaintyValue = (typeof CERTAINTY_VALUES)[number]; export type StatusValue = (typeof STATUS_VALUES)[number]; export type PriorityValue = (typeof PRIORITY_VALUES)[number]; export interface SystemInfo {
     hostname?: string;
     malware_path?: string;
-}
-
-export interface LeakComment {
+}export interface LeakComment {
     id: string;
     author?: string;
     text: string;
     created_at: string;
-}
-
-export interface Leak {
+}export interface Leak {
     id: number;
     asset: string;
     email_leak: string;
@@ -123,46 +103,23 @@ export interface Leak {
     // frontend state'i güncellenir; kalıcı kayıt için backend'e bir
     // PATCH/POST endpoint'i (örn. /leaks/{id}/comments) entegre edilmelidir).
     comments?: LeakComment[];
-}
-
-export type BadgeVariant = "certainty" | "status" | "priority";
-
-// PasswordCell.tsx içindeki "Sızıntı & Şifre Analiz Modalı" tarafından
-// üretilen dinamik sınıflandırma (leak_type / market / asset analizine göre).
-// Diğer bileşenler (örn. gelecekteki raporlama modülü) ihtiyaç duyarsa diye
-// burada da export ediliyor.
-export type PasswordExposureCategory = "corporate" | "third_party" | "stealer";
-
-/* ------------------------------------------------------------------ *
- * HIBP "Pwned Passwords" (k-Anonymity) — Hash Bazlı Parola Sızıntı     *
- * Kontrolü modülü için tipler. Bkz. lib/api.ts -> checkPassword()      *
+}export type BadgeVariant = "certainty" | "status" | "priority";// PasswordCell.tsx içindeki "Sızıntı & Şifre Analiz Modalı" tarafından// üretilen dinamik sınıflandırma (leak_type / market / asset analizine göre).// Diğer bileşenler (örn. gelecekteki raporlama modülü) ihtiyaç duyarsa diye// burada da export ediliyor.export type PasswordExposureCategory = "corporate" | "third_party" | "stealer";/* ------------------------------------------------------------------ *
+ * HIBP "Pwned Passwords"(k - Anonymity) — Hash Bazlı Parola Sızıntı *
+ * Kontrolü modülü için tipler.Bkz.lib / api.ts -> checkPassword() *
  * ve PasswordCell.tsx -> PwnedPasswordChecker.                        *
- * ------------------------------------------------------------------ */
-
-// Backend'in /api/v1/check-password endpoint'inden dönen ham yanıt.
-// (prefix'e uyan tüm suffix:count çiftleri; asıl eşleşme istemcide yapılır.)
-export interface HibpRangeResponse {
+ * ------------------------------------------------------------------ */// Backend'in /api/v1/check-password endpoint'inden dönen ham yanıt.// (prefix'e uyan tüm suffix:count çiftleri; asıl eşleşme istemcide yapılır.)export interface HibpRangeResponse {
     prefix: string;
-    hashes: { suffix: string; count: number }[];
-}
-
-// checkPassword() fonksiyonunun döndürdüğü, UI'ın doğrudan kullandığı
-// sadeleştirilmiş sonuç.
-export interface PwnedPasswordResult {
-    pwned: boolean;
-    count: number;
-}
-
-/* ------------------------------------------------------------------ *
+hashes: { suffix: string; count: number } [];
+}// checkPassword() fonksiyonunun döndürdüğü, UI'ın doğrudan kullandığı// sadeleştirilmiş sonuç.export interface PwnedPasswordResult {
+pwned: boolean;
+count: number;
+}/* ------------------------------------------------------------------ *
  * İzlenen Varlıklar (Monitored Assets) modülü.                         *
  * NOT: AssetBreachLog, yukarıdaki ad-hoc `Leak` tipiyle KARIŞTIRILMAMALI. *
  * `Leak` her taramada sıfırlanan anlık sonuçları, `AssetBreachLog` ise   *
  * bir MonitoredAsset'e bağlı KALICI sızıntı geçmişini temsil eder.       *
  * Bkz. lib/api.ts -> addMonitoredAsset / getMonitoredAssets.            *
- * ------------------------------------------------------------------ */
-export type AssetType = "email" | "domain";
-
-export interface AssetBreachLog {
+ * ------------------------------------------------------------------ */export type AssetType = "email" | "domain"; export interface AssetBreachLog {
     id: number;
     breach_name: string;
     breach_date?: string | null;
@@ -173,8 +130,14 @@ export interface AssetBreachLog {
     asset?: string;
     leak_type?: string;
     market?: string;
-}
-export interface MonitoredAsset {
+    priority?: string;
+    status?: string;
+    certainty?: string;
+    url?: string;
+    ip_info?: string;
+    hostname?: string;
+    malware_path?: string;
+}export interface MonitoredAsset {
     id: number;
     target: string;
     asset_type: AssetType;
@@ -186,32 +149,22 @@ export interface MonitoredAsset {
     verification_token: string;
     created_at: string;
     breach_logs: AssetBreachLog[];
-}
-
-/* ------------------------------------------------------------------ *
+}/* ------------------------------------------------------------------ *
  * Subdomain Keşfi (crt.sh / HackerTarget) modülü.                      *
  * Bkz. lib/api.ts -> getSubdomains / checkSubdomainsAlive.             *
- * ------------------------------------------------------------------ */
-export type SubdomainSource = "crt.sh" | "hackertarget";
-
-export interface SubdomainSearchResult {
+ * ------------------------------------------------------------------ */export type SubdomainSource = "crt.sh" | "hackertarget"; export interface SubdomainSearchResult {
     domain: string;
     source: SubdomainSource | string;
     count: number;
     subdomains: string[];
-}
-
-// POST /api/v1/osint/subdomains/check-alive -> results[] içindeki her öğe.
-export interface SubdomainLivenessItem {
-    subdomain: string;
-    alive: boolean;
-    scheme?: string | null;
-    status_code?: number | null;
-    response_time_ms?: number | null;
-    error?: string | null;
-}
-
-export interface SubdomainLivenessResponse {
+}// POST /api/v1/osint/subdomains/check-alive -> results[] içindeki her öğe.export interface SubdomainLivenessItem {
+subdomain: string;
+alive: boolean;
+scheme ?: string | null;
+status_code ?: number | null;
+response_time_ms ?: number | null;
+error ?: string | null;
+}export interface SubdomainLivenessResponse {
     checked_count: number;
     alive_count: number;
     results: SubdomainLivenessItem[];
