@@ -27,7 +27,6 @@ function normalizeLeakArray(data: any): Leak[] {
 export async function scanEmail(emailOrDomain: string): Promise<Leak[]> {
     const query = encodeURIComponent(emailOrDomain.trim());
 
-    // Artık backend /api/v1/scan?target=... parametresini kullanıyor
     const primaryUrl = `${API_BASE}/api/v1/scan?target=${query}`;
     const fallbackUrl = `${API_BASE}/api/v1/leaks/search-domain?domain=${query}`;
 
@@ -35,7 +34,6 @@ export async function scanEmail(emailOrDomain: string): Promise<Leak[]> {
         let res = await fetch(primaryUrl, { cache: "no-store" });
 
         if (res.status === 404 || !res.ok) {
-            // Yedek uç noktayı dene (Mevcut veritabanı araması)
             res = await fetch(fallbackUrl, { cache: "no-store" });
         }
 
@@ -68,15 +66,6 @@ async function sha1Hex(plainText: string): Promise<string> {
 
 /**
  * HIBP "Pwned Passwords" — Hash Bazlı Parola Sızıntı Kontrolü (k-Anonymity).
- *
- * Parola ASLA açık metin olarak hiçbir yere (backend'e dahi) gönderilmez:
- *   1) Parolanın SHA-1 hash'i bu fonksiyon içinde, tarayıcıda hesaplanır.
- *   2) Hash'in yalnızca ilk 5 karakteri (prefix) backend'e gönderilir.
- *   3) Backend (/api/v1/check-password) bu prefix'i HIBP'ye iletir ve o
- *      prefix'e uyan tüm suffix:count çiftlerini döner (CORS'suz, sunucu
- *      taraflı proxy).
- *   4) Kalan 35 karakter (suffix), yalnızca bu fonksiyonda, dönen listede
- *      aranır — asıl eşleştirme tamamen istemci tarafında yapılır.
  */
 export async function checkPassword(password: string): Promise<PwnedPasswordResult> {
     const plainText = password ?? "";
@@ -102,6 +91,20 @@ export async function checkPassword(password: string): Promise<PwnedPasswordResu
     return match ? { pwned: true, count: match.count } : { pwned: false, count: 0 };
 }
 
+/**
+ * Veritabanındaki tüm sızıntıları getirir (Eksik olan ve derleme hatasına sebep olan fonksiyon).
+ */
+export async function fetchLeaks(): Promise<Leak[]> {
+    const res = await fetch(`${API_BASE}/api/v1/leaks`, { cache: "no-store" });
+
+    if (!res.ok) {
+        throw new Error(`Sızıntılar getirilirken hata oluştu (${res.status})`);
+    }
+
+    const rawData = await res.json();
+    return normalizeLeakArray(rawData);
+}
+
 export async function clearLeaks(): Promise<void> {
     let res = await fetch(`${API_BASE}/api/v1/leaks/clear`, {
         method: "DELETE",
@@ -113,12 +116,8 @@ export async function clearLeaks(): Promise<void> {
     }
 }
 
-/* ------------------------------------------------------------------ *//* İzlenen Varlıklar (Monitored Assets) modülü — bkz. lib/types.ts      *//* ------------------------------------------------------------------ */
-
 /**
  * Verilen e-posta veya domain'i izleme listesine ekler.
- * Zaten listede varsa backend 409 döner; burada okunabilir bir hataya
- * çevrilir.
  */
 export async function addMonitoredAsset(target: string): Promise<MonitoredAsset> {
     const res = await fetch(`${API_BASE}/api/v1/assets`, {
@@ -139,8 +138,7 @@ export async function addMonitoredAsset(target: string): Promise<MonitoredAsset>
 }
 
 /**
- * İzlenen tüm varlıkları (ve her birine bağlı kalıcı sızıntı geçmişini)
- * getirir.
+ * İzlenen tüm varlıkları getirir.
  */
 export async function getMonitoredAssets(): Promise<MonitoredAsset[]> {
     const res = await fetch(`${API_BASE}/api/v1/assets`, { cache: "no-store" });
@@ -153,7 +151,7 @@ export async function getMonitoredAssets(): Promise<MonitoredAsset[]> {
 }
 
 /**
- * İzleme listesinden bir varlığı (ve ona bağlı sızıntı geçmişini) kaldırır.
+ * İzleme listesinden bir varlığı kaldırır.
  */
 export async function deleteMonitoredAsset(id: number): Promise<void> {
     const res = await fetch(`${API_BASE}/api/v1/assets/${id}`, {
@@ -167,8 +165,7 @@ export async function deleteMonitoredAsset(id: number): Promise<void> {
 }
 
 /**
- * Belirli bir izlenen varlığı anında yeniden tarar, güncel (breach_logs
- * dahil) halini döner.
+ * Belirli bir izlenen varlığı anında yeniden tarar.
  */
 export async function rescanMonitoredAsset(id: number): Promise<MonitoredAsset> {
     const res = await fetch(`${API_BASE}/api/v1/assets/${id}/scan`, {
@@ -185,11 +182,6 @@ export async function rescanMonitoredAsset(id: number): Promise<MonitoredAsset> 
 
 /**
  * Domain Sahiplik Doğrulaması (DNS TXT Verification).
- *
- * `asset_type === "domain"` olan bir varlığın DNS TXT kayıtlarında
- * `leak-monitor-verify=<verification_token>` değerinin yayınlanıp
- * yayınlanmadığını backend üzerinden kontrol ettirir. Eşleşme bulunursa
- * varlık `is_verified = true` olarak işaretlenir.
  */
 export async function verifyMonitoredAsset(
     id: number
@@ -209,8 +201,7 @@ export async function verifyMonitoredAsset(
 }
 
 /**
- * crt.sh üzerinden (gerekirse HackerTarget yedek kaynağına düşerek) DNS
- * doğrulaması gerektirmeden pasif subdomain taraması yapar.
+ * crt.sh üzerinden pasif subdomain taraması yapar.
  */
 export async function getSubdomains(domain: string): Promise<SubdomainSearchResult> {
     const res = await fetch(
@@ -225,10 +216,7 @@ export async function getSubdomains(domain: string): Promise<SubdomainSearchResu
 }
 
 /**
- * Verilen subdomain listesi için canlılık kontrolü yapar (HEAD/GET,
- * https öncelikli, http fallback — bkz. services/liveness_service.py).
- * Ayrı bir adımdır: keşif sonucu geldikten sonra kullanıcı isterse
- * tetikler, yüzlerce subdomain çıkan domainlerde ilk yanıtı yavaşlatmaz.
+ * Verilen subdomain listesi için canlılık kontrolü yapar.
  */
 export async function checkSubdomainsAlive(
     subdomains: string[]
@@ -249,9 +237,7 @@ export async function checkSubdomainsAlive(
 }
 
 /**
- * Verilen domain'e ait TÜM sızdırılmış hesapları (anlık + kalıcı izleme
- * geçmişi birleştirilmiş halde) getirir. Yeni bir tarama TETİKLEMEZ,
- * yalnızca veritabanındaki mevcut kayıtları sorgular.
+ * Verilen domain'e ait TÜM sızdırılmış hesapları getirir.
  */
 export async function getDomainAccounts(domain: string): Promise<DomainAccount[]> {
     const cleaned = domain.trim();
@@ -269,9 +255,7 @@ export async function getDomainAccounts(domain: string): Promise<DomainAccount[]
 }
 
 /**
- * Kök domain'e (örn. "izmir.bel.tr") bağlı TÜM izlenen varlıkları
- * (kendisi + e-postalar + alt domainler) ve her birinin kalıcı sızıntı
- * geçmişini gruplu şekilde getirir. Yeni bir tarama TETİKLEMEZ.
+ * Kök domain'e bağlı TÜM izlenen varlıkları ve geçmişi getirir.
  */
 export async function getDomainAssetReport(domain: string): Promise<DomainAssetReport> {
     const cleaned = domain.trim();
